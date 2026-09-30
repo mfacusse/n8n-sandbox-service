@@ -126,6 +126,31 @@ func (r *PostgresRegistry) PickLowestUsed() (*Runner, error) {
 	return run, nil
 }
 
+// All returns every runner row, healthy or not, fresh or stale. Unlike Len and
+// PickLowestUsed it applies no heartbeat-grace or health filtering — callers
+// that need eligibility (e.g. the capacity scaler) apply it themselves.
+func (r *PostgresRegistry) All() []Runner {
+	const q = `
+		SELECT id, http_base_url, control_grpc_addr, healthy, capacity_total, capacity_used, capacity_stopped, last_seen
+		FROM runners
+		ORDER BY id`
+	rows, err := r.db.Query(q)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var out []Runner
+	for rows.Next() {
+		run, err := scanRunner(rows)
+		if err != nil {
+			return nil
+		}
+		out = append(out, *run)
+	}
+	return out
+}
+
 type runnerScanner interface {
 	Scan(dest ...any) error
 }

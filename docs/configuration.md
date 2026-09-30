@@ -5,6 +5,7 @@ All services are configured via environment variables.
 ## Contents
 
 - [API](#api)
+- [Runner capacity scaler](#runner-capacity-scaler)
 - [Runner](#runner)
 - [Sandbox daemon](#sandbox-daemon)
 - [Metrics](#metrics)
@@ -52,6 +53,29 @@ All services are configured via environment variables.
 **Multi-pod (Postgres):** Set `SANDBOX_API_STORE=postgres` and the `SANDBOX_API_POSTGRES_*` variables when running multiple API replicas. Sandbox metadata and runner heartbeats are shared in Postgres; the idle sweeper uses a Postgres advisory lock so only one pod sweeps at a time. New sandboxes are placed on the eligible runner with the lowest reported `capacity_used`. Disable `api.persistence` in Helm when using Postgres (state lives in the database, not local disk).
 
 The idle sweeper waits `SANDBOX_API_ORPHAN_REAP_BUFFER` (default `5m`) after a runner's last heartbeat before removing its orphaned sandbox rows from the API store (sandboxes that are already idle stop/delete candidates). With SQLite, this is based on observing the runner stream close; with Postgres, it is based on `last_seen` in the shared registry.
+
+## Runner capacity scaler
+
+Disabled unless every variable below is set (setting some but not all is a configuration error, not a partial default). Scales one Azure VMSS's node count from the runner registry's aggregate free-capacity signal. See `docs/architecture.md` for how it fits alongside the runner registry and idle sweeper, and `docs/scaler-production-hardening.md` for known gaps before relying on it in production.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `SANDBOX_API_SCALER_MIN_NODES` | *(required to enable)* | Floor the scaler will never scale below |
+| `SANDBOX_API_SCALER_MAX_NODES` | *(required to enable)* | Ceiling the scaler will never scale above. Equal to `MIN_NODES` disables scaling actions (evaluation still runs and is still logged/recorded) |
+| `SANDBOX_API_SCALER_SCALE_OUT_THRESHOLD` | *(required to enable)* | Aggregate free-capacity floor that triggers scale-out when crossed |
+| `SANDBOX_API_SCALER_SCALE_IN_THRESHOLD` | *(required to enable)* | Aggregate free-capacity ceiling that triggers scale-in once sustained |
+| `SANDBOX_API_SCALER_AZURE_SUBSCRIPTION_ID` | *(required to enable)* | Azure subscription holding the VMSS |
+| `SANDBOX_API_SCALER_AZURE_RESOURCE_GROUP` | *(required to enable)* | Resource group holding the VMSS |
+| `SANDBOX_API_SCALER_AZURE_VMSS_NAME` | *(required to enable)* | Name of the VMSS to scale |
+| `SANDBOX_API_SCALER_SCALE_IN_SUSTAINED_FOR` | `10m` | How long the scale-in condition must hold continuously before acting on it |
+| `SANDBOX_API_SCALER_COOLDOWN` | `5m` | Minimum time between any two scale actions, in either direction |
+| `SANDBOX_API_SCALER_EVAL_INTERVAL` | `1m` | How often the scaler evaluates the capacity signal |
+| `SANDBOX_API_SCALER_AZURE_CLIENT_ID` | *(empty)* | Workload-identity federated credential client ID. Empty falls back to the ambient `AZURE_CLIENT_ID` set by the Azure workload identity webhook |
+| `SANDBOX_API_SCALER_AZURE_TENANT_ID` | *(empty)* | Workload-identity federated credential tenant ID. Empty falls back to the ambient `AZURE_TENANT_ID` |
+
+**Multi-pod (Postgres):** like the idle sweeper, the scaler uses the same Postgres advisory lock so only one pod evaluates and acts per cycle when `SANDBOX_API_STORE=postgres`.
+
+**Inspecting the active policy and last decision:** `GET /admin/scaler` (admin API key required) — see `docs/API.md`.
 
 ## Runner
 

@@ -21,6 +21,7 @@ import (
 	"github.com/n8n-io/sandbox-service/internal/api/grpc/pb"
 	"github.com/n8n-io/sandbox-service/internal/api/registry"
 	"github.com/n8n-io/sandbox-service/internal/api/store"
+	"github.com/n8n-io/sandbox-service/internal/azurescale"
 	"github.com/n8n-io/sandbox-service/internal/grpctls"
 	"github.com/n8n-io/sandbox-service/internal/metrics"
 	"github.com/n8n-io/sandbox-service/internal/obs"
@@ -99,12 +100,31 @@ func main() {
 	}
 
 	api.LogIdleSweepConfig(cfg)
+	api.LogScalerConfig(cfg)
 
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
 	defer sweepCancel()
 	api.StartIdleSweeper(sweepCtx, sandboxStore, runnerReg, cfg, sweepLockDB)
 
-	handler, err := api.NewGatewayRouter(sandboxStore, cfg, runnerReg, mrec)
+	var scaler *api.CapacityScaler
+	if cfg.Scaler != nil {
+		vmss, err := azurescale.New(azurescale.Target{
+			SubscriptionID:           cfg.Scaler.AzureSubscriptionID,
+			ResourceGroup:            cfg.Scaler.AzureResourceGroup,
+			VMSSName:                 cfg.Scaler.AzureVMSSName,
+			WorkloadIdentityClientID: cfg.Scaler.AzureClientID,
+			TenantID:                 cfg.Scaler.AzureTenantID,
+		})
+		if err != nil {
+			slog.Error("failed to create vmss scaler client", "error", err)
+			os.Exit(1)
+		}
+		scalerRec := metrics.NewScalerRecorder(cfg.MetricsEnabled)
+		scaler = api.NewCapacityScaler(cfg, runnerReg, vmss, scalerRec)
+		scaler.Start(sweepCtx, sweepLockDB)
+	}
+
+	handler, err := api.NewGatewayRouter(sandboxStore, cfg, runnerReg, mrec, scaler)
 	if err != nil {
 		slog.Error("failed to create api router", "error", err)
 		os.Exit(1)

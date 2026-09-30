@@ -29,3 +29,29 @@ func TestPickLowestUsedNoEligibleRunners(t *testing.T) {
 		t.Fatalf("PickLowestUsed() error = %v, want ErrNoRunners", err)
 	}
 }
+
+func TestAllReturnsEveryRunnerRegardlessOfHealth(t *testing.T) {
+	reg := NewMemory(45 * time.Second)
+	reg.Upsert("r-healthy", "http://127.0.0.1:8080", "127.0.0.1:9091", true, 10, 3, 0)
+	reg.Upsert("r-unhealthy", "http://127.0.0.1:8081", "127.0.0.1:9092", false, 10, 0, 0)
+
+	all := reg.All()
+	if len(all) != 2 {
+		t.Fatalf("All() returned %d runners, want 2", len(all))
+	}
+	byID := make(map[string]Runner, len(all))
+	for _, r := range all {
+		byID[r.ID] = r
+	}
+	if got, ok := byID["r-healthy"]; !ok || got.CapacityUsed != 3 {
+		t.Fatalf("All() missing or wrong data for r-healthy: %+v ok=%v", got, ok)
+	}
+	if got, ok := byID["r-unhealthy"]; !ok || got.Healthy {
+		t.Fatalf("All() should include unhealthy runners as-is: %+v ok=%v", got, ok)
+	}
+
+	reg.Remove("r-unhealthy")
+	if len(reg.All()) != 1 {
+		t.Fatalf("All() after Remove() = %d, want 1", len(reg.All()))
+	}
+}

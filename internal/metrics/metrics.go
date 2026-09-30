@@ -398,6 +398,85 @@ func (r *RunnerRecorder) RecoveryCount(success bool) float64 {
 	return testutil.ToFloat64(r.recoveries.WithLabelValues(resultLabel(success)))
 }
 
+// Scale decision label values used with ScalerRecorder.ObserveDecision.
+const (
+	ScaleDecisionOut   = "scale_out"
+	ScaleDecisionIn    = "scale_in"
+	ScaleDecisionNoOp  = "no_op"
+	ScaleDecisionError = "error"
+)
+
+// ScalerRecorder owns the metric instruments emitted by the runner-VMSS
+// capacity scaler.
+type ScalerRecorder struct {
+	reg          *prometheus.Registry
+	decisions    *prometheus.CounterVec
+	nodeCount    prometheus.Gauge
+	freeCapacity prometheus.Gauge
+}
+
+// NewScalerRecorder builds the scaler recorder. If enabled is false, the
+// returned recorder discards all observations and exposes a nil Registry.
+func NewScalerRecorder(enabled bool) *ScalerRecorder {
+	if !enabled {
+		return &ScalerRecorder{}
+	}
+	reg := newRegistry()
+	decisions := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   Namespace,
+			Name:        "scaler_decisions_total",
+			Help:        "Runner VMSS capacity scaler evaluations, labeled by outcome (scale_out, scale_in, no_op, error).",
+			ConstLabels: prometheus.Labels{"role": RoleAPI},
+		},
+		[]string{"decision"},
+	)
+	nodeCount := prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace:   Namespace,
+			Name:        "scaler_vmss_node_count",
+			Help:        "Current VMSS node count as last observed by the capacity scaler.",
+			ConstLabels: prometheus.Labels{"role": RoleAPI},
+		},
+	)
+	freeCapacity := prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace:   Namespace,
+			Name:        "scaler_free_capacity",
+			Help:        "Aggregate free runner capacity as last observed by the capacity scaler.",
+			ConstLabels: prometheus.Labels{"role": RoleAPI},
+		},
+	)
+	reg.MustRegister(decisions, nodeCount, freeCapacity)
+	return &ScalerRecorder{reg: reg, decisions: decisions, nodeCount: nodeCount, freeCapacity: freeCapacity}
+}
+
+// Registry returns the underlying Prometheus registry, or nil if disabled.
+func (r *ScalerRecorder) Registry() *prometheus.Registry { return r.reg }
+
+// Enabled reports whether metrics observations are active.
+func (r *ScalerRecorder) Enabled() bool { return r.reg != nil }
+
+// ObserveDecision records the outcome of one scale evaluation and the
+// resulting node count / free capacity snapshot.
+func (r *ScalerRecorder) ObserveDecision(decision string, nodeCount, freeCapacity int) {
+	if r.reg == nil {
+		return
+	}
+	r.decisions.WithLabelValues(decision).Inc()
+	r.nodeCount.Set(float64(nodeCount))
+	r.freeCapacity.Set(float64(freeCapacity))
+}
+
+// DecisionCount returns the counter value for a scale decision outcome.
+// Intended for tests in other packages.
+func (r *ScalerRecorder) DecisionCount(decision string) float64 {
+	if r.reg == nil {
+		return 0
+	}
+	return testutil.ToFloat64(r.decisions.WithLabelValues(decision))
+}
+
 func resultLabel(success bool) string {
 	if success {
 		return "success"

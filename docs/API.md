@@ -748,6 +748,53 @@ curl "http://localhost:8080/sandboxes/550e8400-e29b-41d4-a716-446655440000/stat?
 
 ---
 
+## Admin: capacity scaler
+
+### GET /admin/scaler
+
+The runner-VMSS capacity scaler's active policy, VMSS target, and most recent evaluation (see `docs/configuration.md` for the `SANDBOX_API_SCALER_*` variables this reflects). Admin API key required.
+
+**Response:** `200 OK`
+
+```json
+{
+  "policy": {
+    "min_nodes": 2,
+    "max_nodes": 20,
+    "scale_out_threshold": 5,
+    "scale_in_threshold": 30,
+    "scale_in_sustained_for": "10m0s",
+    "cooldown": "5m0s",
+    "eval_interval": "1m0s"
+  },
+  "vmss": {
+    "subscription_id": "...",
+    "resource_group": "rg-n8n-sandbox-firecracker-...",
+    "vmss_name": "n8n-sandbox-stage-firecracker-1"
+  },
+  "last_decision": {
+    "observed_at": 1700000000,
+    "free_capacity": 3,
+    "total_capacity": 40,
+    "signal_available": true,
+    "current_node_count": 4,
+    "decision": "scale_out",
+    "reason": "below scale-out threshold",
+    "target_node_count": 5
+  }
+}
+```
+
+`last_decision` is `null` if no evaluation cycle has completed yet (the process just started).
+
+**Errors:** `503` the scaler is disabled (`SANDBOX_API_SCALER_MIN_NODES`/`MAX_NODES` etc. unset).
+
+```sh
+curl -H "X-Api-Key: YOUR_ADMIN_KEY" http://localhost:8080/admin/scaler
+```
+
+---
+
 ## Admin: tenants and API keys
 
 All `/admin/*` routes require an admin API key (`SANDBOX_API_KEYS`). Tenant keys receive `403`.

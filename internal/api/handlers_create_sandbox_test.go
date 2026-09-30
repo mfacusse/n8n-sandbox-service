@@ -213,7 +213,7 @@ func newIdleTestGateway(t *testing.T, adminKey string, fake *fakeSandboxControl)
 	reg := registry.New(45 * time.Second)
 	reg.Upsert("runner-1", "https://127.0.0.1:9", startFakeRunnerControl(t, fake), true, 10, 0, 0)
 
-	router, err := NewGatewayRouter(s, cfg, reg, metrics.NewAPIRecorder(false))
+	router, err := NewGatewayRouter(s, cfg, reg, metrics.NewAPIRecorder(false), nil)
 	if err != nil {
 		t.Fatalf("create gateway router: %v", err)
 	}

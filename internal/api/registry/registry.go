@@ -30,4 +30,9 @@ type RunnerRegistry interface {
 	GoneLongEnough(runnerID string, buffer time.Duration, now time.Time) bool
 	Len() int
 	PickLowestUsed() (*Runner, error)
+	// All returns every currently registered runner, healthy or not, fresh or
+	// stale. Callers that need only eligible runners (e.g. placement) filter
+	// themselves; this is the raw enumeration used by the capacity scaler to
+	// aggregate free capacity across the fleet.
+	All() []Runner
 }

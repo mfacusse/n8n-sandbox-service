@@ -14,8 +14,9 @@ import (
 // NewGatewayRouter creates the public API gateway that manages state and
 // coordinates with registered runner services. If rec is enabled, HTTPMiddleware
 // wraps the request chain, and its /metrics handler is mounted here unless
-// cfg gives metrics a listener of their own.
-func NewGatewayRouter(s store.SandboxStore, cfg *config.APIConfig, reg registry.RunnerRegistry, rec *metrics.APIRecorder) (http.Handler, error) {
+// cfg gives metrics a listener of their own. scaler may be nil (capacity
+// scaler disabled), in which case GET /admin/scaler reports it as such.
+func NewGatewayRouter(s store.SandboxStore, cfg *config.APIConfig, reg registry.RunnerRegistry, rec *metrics.APIRecorder, scaler *CapacityScaler) (http.Handler, error) {
 	runnerTransport, err := newRunnerTransport(cfg)
 	if err != nil {
 		return nil, err
@@ -39,6 +40,7 @@ func NewGatewayRouter(s store.SandboxStore, cfg *config.APIConfig, reg registry.
 	mux.HandleFunc("GET /sandboxes/{id}", handleGetSandbox(s, cfg))
 	mux.HandleFunc("DELETE /sandboxes/{id}", handleDeleteSandbox(s, cfg, rec))
 
+	mux.HandleFunc("GET /admin/scaler", handleGetScaler(scaler))
 	mux.HandleFunc("GET /admin/tenants", handleListTenants(s))
 	mux.HandleFunc("POST /admin/tenants", handleCreateTenant(s, cfg))
 	mux.HandleFunc("GET /admin/tenants/{id}", handleGetTenant(s))

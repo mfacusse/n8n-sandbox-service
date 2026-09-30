@@ -90,9 +90,13 @@ The API gateway is the single public-facing service. It exposes a REST API for s
 | Store | `internal/api/store/` | Sandbox metadata (`sqlite` default, `postgres` for multi-pod) |
 | Sweeper lock | `internal/api/store/postgres.go` | Postgres advisory lock for idle sweeper leadership |
 | Idle sweeper | `internal/api/ttl.go` | Periodic scan to stop/delete idle sandboxes (ephemeral ones are deleted, never stopped) |
+| Runner scaler | `internal/api/scaler.go` | Periodic scan of the runner registry's aggregate free capacity; scales one Azure VMSS's node count within a configured min/max/cooldown policy |
+| Azure VMSS client | `internal/azurescale/` | `armcompute`/`azidentity`-backed `VMSSScaler`, behind an interface so the scaler's decision logic is testable without live Azure calls |
 | Config | `internal/api/config/` | Environment variable parsing and validation |
 
 **Middleware chain:** Recovery → CORS (optional) → Logging → Auth (API key) → Metrics (optional)
+
+**Runner scaler:** Disabled unless `SANDBOX_API_SCALER_*` is fully configured (`docs/configuration.md`). Runs as a ticker-driven goroutine in the same process as the idle sweeper, reusing the same Postgres advisory lock so only one API pod acts per evaluation cycle in multi-pod deployments. Reads the runner registry's aggregate free capacity (across healthy, non-stale runners) as its sole scaling signal, and calls the target VMSS's scale-set API to adjust node count. `GET /admin/scaler` (admin key) exposes the active policy and the most recent decision. See `docs/scaler-production-hardening.md` for known gaps before relying on this in production.
 
 ### Runner
 
