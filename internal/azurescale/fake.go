@@ -7,6 +7,16 @@ import (
 
 // Fake is an in-memory VMSSScaler for tests. Capacity starts at Initial and is
 // updated by SetCapacity; every call is recorded for assertions.
+//
+// Not safe for concurrent mutation: GetErr, SetErr, and Calls are exported
+// for tests to set/read directly, without the mutex CurrentCapacity/
+// SetCapacity take internally. That mutex only protects the fake's own
+// methods against each other — it does not extend to direct field access.
+// Set GetErr/SetErr during test setup, and read Calls only after the fake's
+// methods are done being called (true for every test in this repo today,
+// since a Scaler's evaluation loop never calls CurrentCapacity/SetCapacity
+// concurrently with itself); do not mutate these fields from a second
+// goroutine while CurrentCapacity/SetCapacity may still be running.
 type Fake struct {
 	mu sync.Mutex
 

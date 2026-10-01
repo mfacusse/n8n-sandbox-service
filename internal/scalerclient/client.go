@@ -10,10 +10,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// maxResponseBytes bounds how much of the backchannel's response body is
+// read before decoding — well above a real policy payload's size, but a hard
+// cap on how much memory a buggy or compromised backchannel can make the API
+// allocate on the admin endpoint's request path.
+const maxResponseBytes = 1 << 20 // 1 MiB
 
 // ErrUnreachable means the backchannel call failed at the connection/HTTP
 // level (refused, timed out, non-200/401 status) — the scaler is down or
@@ -85,7 +92,7 @@ func (c *Client) GetPolicy(ctx context.Context) (*PolicyResponse, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnreachable, err)
+		return nil, fmt.Errorf("%w: %w", ErrUnreachable, err)
 	}
 	defer resp.Body.Close()
 
@@ -97,7 +104,7 @@ func (c *Client) GetPolicy(ctx context.Context) (*PolicyResponse, error) {
 	}
 
 	var out PolicyResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&out); err != nil {
 		return nil, fmt.Errorf("scalerclient: decode response: %w", err)
 	}
 	return &out, nil

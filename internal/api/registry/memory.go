@@ -111,8 +111,8 @@ func (r *MemoryRegistry) Len() int {
 
 // All returns a value-copy snapshot of every registered runner, in
 // registration order. Value copies avoid handing out pointers into registry
-// storage that a caller could mutate concurrently.
-func (r *MemoryRegistry) All() []Runner {
+// storage that a caller could mutate concurrently. Never errors.
+func (r *MemoryRegistry) All() ([]Runner, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]Runner, 0, len(r.order))
@@ -121,7 +121,7 @@ func (r *MemoryRegistry) All() []Runner {
 			out = append(out, *run)
 		}
 	}
-	return out
+	return out, nil
 }
 
 func (r *MemoryRegistry) eligibleLocked(now time.Time) []*Runner {

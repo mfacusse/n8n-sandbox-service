@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -389,7 +390,7 @@ func LoadAPI() (*APIConfig, error) {
 	}
 
 	cfg.ScalerURL = strings.TrimSpace(os.Getenv("SANDBOX_API_SCALER_URL"))
-	cfg.ScalerToken = os.Getenv("SANDBOX_API_SCALER_TOKEN")
+	cfg.ScalerToken = strings.TrimSpace(os.Getenv("SANDBOX_API_SCALER_TOKEN"))
 	cfg.ScalerTimeout = defaultScalerTimeout
 	if v := strings.TrimSpace(os.Getenv("SANDBOX_API_SCALER_TIMEOUT")); v != "" {
 		d, err := time.ParseDuration(v)
@@ -398,8 +399,14 @@ func LoadAPI() (*APIConfig, error) {
 		}
 		cfg.ScalerTimeout = d
 	}
-	if cfg.ScalerURL != "" && cfg.ScalerToken == "" {
-		return nil, fmt.Errorf("SANDBOX_API_SCALER_TOKEN must be set when SANDBOX_API_SCALER_URL is set")
+	if cfg.ScalerURL != "" {
+		parsed, err := url.Parse(cfg.ScalerURL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return nil, fmt.Errorf("SANDBOX_API_SCALER_URL must be an absolute http(s) URL with a host, got %q", cfg.ScalerURL)
+		}
+		if cfg.ScalerToken == "" {
+			return nil, fmt.Errorf("SANDBOX_API_SCALER_TOKEN must be set when SANDBOX_API_SCALER_URL is set")
+		}
 	}
 
 	return cfg, nil

@@ -66,8 +66,35 @@ func TestGetScalerProxiesSuccessResponse(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.Policy.MinNodes != 2 || resp.VMSS.VMSSName != "vmss-1" {
-		t.Fatalf("unexpected response: %+v", resp)
+	wantPolicy := struct {
+		MinNodes            int
+		MaxNodes            int
+		ScaleOutThreshold   int
+		ScaleInThreshold    int
+		ScaleInSustainedFor string
+		Cooldown            string
+		EvalInterval        string
+	}{2, 10, 5, 30, "10m0s", "5m0s", "1m0s"}
+	gotPolicy := struct {
+		MinNodes            int
+		MaxNodes            int
+		ScaleOutThreshold   int
+		ScaleInThreshold    int
+		ScaleInSustainedFor string
+		Cooldown            string
+		EvalInterval        string
+	}{
+		resp.Policy.MinNodes, resp.Policy.MaxNodes, resp.Policy.ScaleOutThreshold, resp.Policy.ScaleInThreshold,
+		resp.Policy.ScaleInSustainedFor, resp.Policy.Cooldown, resp.Policy.EvalInterval,
+	}
+	if gotPolicy != wantPolicy {
+		t.Fatalf("Policy = %+v, want %+v", gotPolicy, wantPolicy)
+	}
+	if resp.VMSS.SubscriptionID != "sub-1" || resp.VMSS.ResourceGroup != "rg-1" || resp.VMSS.VMSSName != "vmss-1" {
+		t.Fatalf("VMSS = %+v, want {sub-1 rg-1 vmss-1}", resp.VMSS)
+	}
+	if resp.LastDecision != nil {
+		t.Fatalf("LastDecision = %+v, want nil for the mocked body", resp.LastDecision)
 	}
 }
 
@@ -203,13 +230,20 @@ func TestGetScalerEndToEndRealChain(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.Policy.MinNodes != 2 || resp.Policy.MaxNodes != 10 {
+	if resp.Policy.MinNodes != 2 || resp.Policy.MaxNodes != 10 || resp.Policy.ScaleOutThreshold != 5 || resp.Policy.ScaleInThreshold != 30 ||
+		resp.Policy.ScaleInSustainedFor != "10m0s" || resp.Policy.Cooldown != "5m0s" || resp.Policy.EvalInterval != "1m0s" {
 		t.Fatalf("unexpected policy in response: %+v", resp.Policy)
 	}
-	if resp.VMSS.ResourceGroup != "rg-1" || resp.VMSS.VMSSName != "vmss-1" {
+	if resp.VMSS.SubscriptionID != "sub-1" || resp.VMSS.ResourceGroup != "rg-1" || resp.VMSS.VMSSName != "vmss-1" {
 		t.Fatalf("unexpected vmss target in response: %+v", resp.VMSS)
 	}
-	if resp.LastDecision == nil || resp.LastDecision.Decision != scaler.DecisionScaleOut {
-		t.Fatalf("expected last_decision to reflect the real scale_out evaluation, got %+v", resp.LastDecision)
+	if resp.LastDecision == nil {
+		t.Fatal("expected last_decision to be populated from the real evaluation, got nil")
+	}
+	d := resp.LastDecision
+	if d.Decision != scaler.DecisionScaleOut || d.Reason != scaler.ReasonBelowScaleOutThresh ||
+		d.FreeCapacity != 2 || d.TotalCapacity != 10 || !d.SignalAvailable ||
+		d.CurrentNodeCount != 4 || d.TargetNodeCount == nil || *d.TargetNodeCount != 5 || d.Error != "" {
+		t.Fatalf("last_decision does not match the real scale_out evaluation: %+v", d)
 	}
 }

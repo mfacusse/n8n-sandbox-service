@@ -43,6 +43,7 @@ By design (see `001`'s `plan.md` Scale/Scope, carried into `002`) — one scaler
 - A new ConfigMap/Secret for `SANDBOX_SCALER_*` (policy, Postgres connection, `SANDBOX_SCALER_API_TOKEN`).
 - A corresponding `SANDBOX_API_SCALER_URL`/`SANDBOX_API_SCALER_TOKEN` entry on the existing API Deployment, pointed at the new scaler Service.
 - The Azure workload-identity ServiceAccount/federated-credential wiring, which belongs in `n8n-cloud-infrastructure-next` (mirroring `runnerMetricsCollector` in `charts/firecracker-sandbox-service`) — see §8 for the identity itself.
+- **No registry publishing path either**: `Dockerfile.scaler` can be built locally (`make docker-scaler-amd64`/`-arm64`), but none of the image-publish workflows (`release-service-publish.yml`, `publish-service-staging.yml`, `build-sysbox-branch-images.yml`, `.github/actions/sandbox-acr-publish/action.yml`) list it alongside the API/runner/sandbox images. Add `Dockerfile.scaler`/`n8n-sandbox-service-scaler` to those workflow matrices before the chart Deployment above has any real image to pull. Not done here: these are release pipelines with image-tagging/ACR-credential details that need verifying against an actual run, not something to edit speculatively.
 
 ### 7. No runtime policy mutation
 

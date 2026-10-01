@@ -13,8 +13,12 @@ import (
 // testHeartbeatGrace is generous: these tests advance the synthetic `now`
 // passed to Evaluate by minutes to exercise cooldown/sustained-window logic,
 // while seedRunner always stamps LastSeen with the real wall clock. A short
-// grace would make runners look stale purely from that gap, which is a
-// distinct scenario already covered by TestEvaluateStaleRegistryDoesNotScaleOut.
+// grace would make runners registered earlier in a test look stale purely
+// from that gap — a registered-but-stale scenario distinct from (and not
+// covered by) TestEvaluateStaleRegistryDoesNotScaleOut below, which uses an
+// empty registry rather than a stale one; both collapse to the same
+// Available=false branch in aggregateCapacitySignal, which is what matters
+// here.
 const testHeartbeatGrace = 24 * time.Hour
 
 func newTestScaler(t *testing.T, policy Policy, source RunnerSource, initialCapacity int) (*Scaler, *azurescale.Fake) {
@@ -43,7 +47,12 @@ var basePolicy = Policy{
 	EvalInterval:        time.Minute,
 }
 
-func TestEvaluateScaleOutBelowThresholdCappedAtMax(t *testing.T) {
+// TestEvaluateScaleOutBelowThresholdTargetsCurrentPlusOne covers the normal
+// scale-out step (target = current+1). It does NOT exercise the MaxNodes
+// clamp in decide() — that clamp is unreachable through Evaluate given the
+// fixed +1 step (see the comment above it in scaler.go); that invariant is
+// what TestEvaluateNoScaleOutAtMaxNodes below actually protects.
+func TestEvaluateScaleOutBelowThresholdTargetsCurrentPlusOne(t *testing.T) {
 	source := &FakeRunnerSource{}
 	seedRunner(source, "r1", 10, 8) // free = 2, below threshold 5
 

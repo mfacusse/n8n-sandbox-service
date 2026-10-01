@@ -457,15 +457,22 @@ func (r *ScalerRecorder) Registry() *prometheus.Registry { return r.reg }
 // Enabled reports whether metrics observations are active.
 func (r *ScalerRecorder) Enabled() bool { return r.reg != nil }
 
-// ObserveDecision records the outcome of one scale evaluation and the
-// resulting node count / free capacity snapshot.
-func (r *ScalerRecorder) ObserveDecision(decision string, nodeCount, freeCapacity int) {
+// ObserveDecision records the outcome of one scale evaluation. nodeCount and
+// freeCapacity update their gauges only when the corresponding value was
+// actually observed this cycle (nodeCountValid / freeCapacityValid) — a
+// failed Azure or runner-signal read must not overwrite the gauge with zero,
+// since zero was never observed; the last-known value is preserved instead.
+func (r *ScalerRecorder) ObserveDecision(decision string, nodeCountValid bool, nodeCount int, freeCapacityValid bool, freeCapacity int) {
 	if r.reg == nil {
 		return
 	}
 	r.decisions.WithLabelValues(decision).Inc()
-	r.nodeCount.Set(float64(nodeCount))
-	r.freeCapacity.Set(float64(freeCapacity))
+	if nodeCountValid {
+		r.nodeCount.Set(float64(nodeCount))
+	}
+	if freeCapacityValid {
+		r.freeCapacity.Set(float64(freeCapacity))
+	}
 }
 
 // DecisionCount returns the counter value for a scale decision outcome.

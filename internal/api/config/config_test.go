@@ -509,6 +509,57 @@ func TestLoadAPIScalerProxyRequiresTokenWhenURLSet(t *testing.T) {
 	}
 }
 
+func TestLoadAPIScalerProxyLoadsWhenConfigured(t *testing.T) {
+	t.Setenv("SANDBOX_API_KEYS", "test-key")
+	t.Setenv("SANDBOX_API_RUNNER_REGISTRATION_TOKEN", "reg-token")
+	t.Setenv("SANDBOX_API_SCALER_URL", "http://scaler.internal:8090")
+	t.Setenv("SANDBOX_API_SCALER_TOKEN", "shared-secret")
+	setRequiredGRPCMTLS(t)
+
+	cfg, err := LoadAPI()
+	if err != nil {
+		t.Fatalf("LoadAPI() failed: %v", err)
+	}
+	if cfg.ScalerURL != "http://scaler.internal:8090" {
+		t.Fatalf("ScalerURL = %q, want http://scaler.internal:8090", cfg.ScalerURL)
+	}
+	if cfg.ScalerToken != "shared-secret" {
+		t.Fatalf("ScalerToken = %q, want shared-secret", cfg.ScalerToken)
+	}
+	if cfg.ScalerTimeout != 3*time.Second {
+		t.Fatalf("ScalerTimeout = %v, want default 3s", cfg.ScalerTimeout)
+	}
+}
+
+func TestLoadAPIScalerURLMustBeAbsoluteHTTPURL(t *testing.T) {
+	cases := []string{"not-a-url", "ftp://scaler.internal:8090", "http://", "scaler.internal:8090"}
+	for _, v := range cases {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("SANDBOX_API_KEYS", "test-key")
+			t.Setenv("SANDBOX_API_RUNNER_REGISTRATION_TOKEN", "reg-token")
+			t.Setenv("SANDBOX_API_SCALER_URL", v)
+			t.Setenv("SANDBOX_API_SCALER_TOKEN", "shared-secret")
+			setRequiredGRPCMTLS(t)
+
+			if _, err := LoadAPI(); err == nil {
+				t.Fatalf("expected LoadAPI to reject SANDBOX_API_SCALER_URL=%q", v)
+			}
+		})
+	}
+}
+
+func TestLoadAPIScalerTokenWhitespaceOnlyTreatedAsUnset(t *testing.T) {
+	t.Setenv("SANDBOX_API_KEYS", "test-key")
+	t.Setenv("SANDBOX_API_RUNNER_REGISTRATION_TOKEN", "reg-token")
+	t.Setenv("SANDBOX_API_SCALER_URL", "http://scaler.internal:8090")
+	t.Setenv("SANDBOX_API_SCALER_TOKEN", "   ")
+	setRequiredGRPCMTLS(t)
+
+	if _, err := LoadAPI(); err == nil {
+		t.Fatal("expected LoadAPI to reject a whitespace-only SANDBOX_API_SCALER_TOKEN")
+	}
+}
+
 func TestLoadAPIScalerProxyDisabledByDefault(t *testing.T) {
 	t.Setenv("SANDBOX_API_KEYS", "test-key")
 	t.Setenv("SANDBOX_API_RUNNER_REGISTRATION_TOKEN", "reg-token")

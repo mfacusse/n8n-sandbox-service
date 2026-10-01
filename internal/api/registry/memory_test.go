@@ -35,7 +35,10 @@ func TestAllReturnsEveryRunnerRegardlessOfHealth(t *testing.T) {
 	reg.Upsert("r-healthy", "http://127.0.0.1:8080", "127.0.0.1:9091", true, 10, 3, 0)
 	reg.Upsert("r-unhealthy", "http://127.0.0.1:8081", "127.0.0.1:9092", false, 10, 0, 0)
 
-	all := reg.All()
+	all, err := reg.All()
+	if err != nil {
+		t.Fatalf("All() error = %v, want nil", err)
+	}
 	if len(all) != 2 {
 		t.Fatalf("All() returned %d runners, want 2", len(all))
 	}
@@ -51,7 +54,11 @@ func TestAllReturnsEveryRunnerRegardlessOfHealth(t *testing.T) {
 	}
 
 	reg.Remove("r-unhealthy")
-	if len(reg.All()) != 1 {
-		t.Fatalf("All() after Remove() = %d, want 1", len(reg.All()))
+	afterRemove, err := reg.All()
+	if err != nil {
+		t.Fatalf("All() after Remove() error = %v, want nil", err)
+	}
+	if len(afterRemove) != 1 {
+		t.Fatalf("All() after Remove() = %d, want 1", len(afterRemove))
 	}
 }

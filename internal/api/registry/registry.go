@@ -32,7 +32,8 @@ type RunnerRegistry interface {
 	PickLowestUsed() (*Runner, error)
 	// All returns every currently registered runner, healthy or not, fresh or
 	// stale. Callers that need only eligible runners (e.g. placement) filter
-	// themselves; this is the raw enumeration used by the capacity scaler to
-	// aggregate free capacity across the fleet.
-	All() []Runner
+	// themselves. Returns an error if the underlying read fails (e.g. a
+	// Postgres query error) rather than silently returning a partial or
+	// empty result indistinguishable from a genuinely empty fleet.
+	All() ([]Runner, error)
 }

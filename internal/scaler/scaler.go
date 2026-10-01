@@ -222,6 +222,11 @@ func (s *Scaler) decide(signal CapacitySignal, currentCount int, now time.Time) 
 			return DecisionNoOp, ReasonCooldownActive, 0, false
 		}
 		target := currentCount + 1
+		// Defensive, not currently reachable: the guard above already ensures
+		// currentCount < MaxNodes, so target <= MaxNodes given the fixed +1
+		// step. Kept so a future change to the step size (e.g. a variable
+		// step) stays bounded without relying on every future caller to
+		// re-derive this invariant.
 		if target > s.policy.MaxNodes {
 			target = s.policy.MaxNodes
 		}
@@ -243,6 +248,8 @@ func (s *Scaler) decide(signal CapacitySignal, currentCount int, now time.Time) 
 			return DecisionNoOp, ReasonCooldownActive, 0, false
 		}
 		target := currentCount - 1
+		// Defensive, not currently reachable: symmetric with the scale-out
+		// clamp above (the guard already ensures currentCount > MinNodes).
 		if target < s.policy.MinNodes {
 			target = s.policy.MinNodes
 		}
@@ -299,7 +306,13 @@ func (s *Scaler) finish(rec ScaleDecisionRecord) {
 	if rec.Error != "" {
 		metricDecision = metrics.ScaleDecisionError
 	}
-	s.rec.ObserveDecision(metricDecision, rec.CurrentNodeCount, rec.FreeCapacity)
+	// A signal-source failure means neither value was observed this cycle; a
+	// CurrentCapacity failure means the capacity signal was read but the node
+	// count was not. Either way, the unread gauge must not be overwritten
+	// with zero.
+	freeCapacityValid := rec.Reason != ReasonSignalSourceFailed
+	nodeCountValid := freeCapacityValid && rec.Reason != ReasonCurrentCapacityFailed
+	s.rec.ObserveDecision(metricDecision, nodeCountValid, rec.CurrentNodeCount, freeCapacityValid, rec.FreeCapacity)
 }
 
 // LastDecision returns the most recent evaluation's outcome, or nil if no

@@ -10,9 +10,16 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/n8n-io/sandbox-service/internal/api/config"
+	"github.com/n8n-io/sandbox-service/internal/api/store"
 )
 
+// openTestPostgresSource mirrors
+// internal/api/registry/postgres_integration_test.go's
+// openTestPostgresRegistry/testPostgresConfig: it goes through
+// store.NewPostgres (which runs the schema migrations, so `runners` exists
+// even against a fresh database) and honors the same optional
+// SANDBOX_TEST_POSTGRES_* env vars with the same defaults.
 func openTestPostgresSource(t *testing.T) (*PostgresRunnerSource, *sql.DB) {
 	t.Helper()
 	host := os.Getenv("SANDBOX_TEST_POSTGRES_HOST")
@@ -27,17 +34,32 @@ func openTestPostgresSource(t *testing.T) (*PostgresRunnerSource, *sql.DB) {
 		}
 		port = n
 	}
-	dsn := "host=" + host + " port=" + strconv.Itoa(port) +
-		" user=" + os.Getenv("SANDBOX_TEST_POSTGRES_USER") +
-		" password=" + os.Getenv("SANDBOX_TEST_POSTGRES_PASSWORD") +
-		" dbname=" + os.Getenv("SANDBOX_TEST_POSTGRES_DB") +
-		" sslmode=disable"
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+	user := os.Getenv("SANDBOX_TEST_POSTGRES_USER")
+	if user == "" {
+		user = "postgres"
 	}
-	t.Cleanup(func() { _ = db.Close() })
-	return NewPostgresRunnerSource(db), db
+	db := os.Getenv("SANDBOX_TEST_POSTGRES_DB")
+	if db == "" {
+		db = "postgres"
+	}
+	sslmode := os.Getenv("SANDBOX_TEST_POSTGRES_SSLMODE")
+	if sslmode == "" {
+		sslmode = "disable"
+	}
+	cfg := config.PostgresConfig{
+		Host:     host,
+		Port:     port,
+		User:     user,
+		Password: os.Getenv("SANDBOX_TEST_POSTGRES_PASSWORD"),
+		Database: db,
+		SSLMode:  sslmode,
+	}
+	s, err := store.NewPostgres(cfg)
+	if err != nil {
+		t.Fatalf("store.NewPostgres: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return NewPostgresRunnerSource(s.DB()), s.DB()
 }
 
 func TestPostgresRunnerSourceAllReturnsSeededRows(t *testing.T) {

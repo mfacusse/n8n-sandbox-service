@@ -12,6 +12,10 @@ import (
 	"github.com/n8n-io/sandbox-service/internal/metrics"
 )
 
+// testHTTPClient has a short timeout so a stalled handler fails the test
+// instead of hanging the suite.
+var testHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
 func TestServerGetPolicyWithCorrectTokenReturns200(t *testing.T) {
 	source := &FakeRunnerSource{}
 	seedRunner(source, "r1", 10, 8) // free = 2: will scale-out
@@ -23,7 +27,7 @@ func TestServerGetPolicyWithCorrectTokenReturns200(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/policy", nil)
 	req.Header.Set("Authorization", "Bearer good-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := testHTTPClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /policy: %v", err)
 	}
@@ -62,7 +66,7 @@ func TestServerGetPolicyMissingOrWrongTokenReturns401(t *testing.T) {
 			if tc.header != "" {
 				req.Header.Set("Authorization", tc.header)
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := testHTTPClient.Do(req)
 			if err != nil {
 				t.Fatalf("GET /policy: %v", err)
 			}
@@ -81,7 +85,7 @@ func TestServerGetPolicyNoDecisionYetReturnsNullLastDecision(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/policy", nil)
 	req.Header.Set("Authorization", "Bearer good-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := testHTTPClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /policy: %v", err)
 	}

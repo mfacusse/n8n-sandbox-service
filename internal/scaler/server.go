@@ -61,8 +61,8 @@ func NewServer(s *Scaler, token string) http.Handler {
 
 func requireBearerToken(token string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

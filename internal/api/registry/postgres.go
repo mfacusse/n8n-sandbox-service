@@ -128,15 +128,18 @@ func (r *PostgresRegistry) PickLowestUsed() (*Runner, error) {
 
 // All returns every runner row, healthy or not, fresh or stale. Unlike Len and
 // PickLowestUsed it applies no heartbeat-grace or health filtering — callers
-// that need eligibility (e.g. the capacity scaler) apply it themselves.
-func (r *PostgresRegistry) All() []Runner {
+// that need eligibility apply it themselves. A query, scan, or iteration
+// failure is returned as an error rather than silently truncating the result,
+// so a transient failure is never indistinguishable from a genuinely empty
+// fleet.
+func (r *PostgresRegistry) All() ([]Runner, error) {
 	const q = `
 		SELECT id, http_base_url, control_grpc_addr, healthy, capacity_total, capacity_used, capacity_stopped, last_seen
 		FROM runners
 		ORDER BY id`
 	rows, err := r.db.Query(q)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("registry: query runners: %w", err)
 	}
 	defer rows.Close()
 
@@ -144,11 +147,14 @@ func (r *PostgresRegistry) All() []Runner {
 	for rows.Next() {
 		run, err := scanRunner(rows)
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("registry: scan runner row: %w", err)
 		}
 		out = append(out, *run)
 	}
-	return out
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("registry: iterate runner rows: %w", err)
+	}
+	return out, nil
 }
 
 type runnerScanner interface {

@@ -68,9 +68,17 @@ func main() {
 	defer cancel()
 	s.Start(ctx)
 
+	handler := scaler.NewServer(s, cfg.APIToken)
+	if rec.Enabled() {
+		mux := http.NewServeMux()
+		mux.Handle("/", handler)
+		mux.Handle("GET /metrics", metrics.Handler(rec.Registry()))
+		handler = mux
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           scaler.NewServer(s, cfg.APIToken),
+		Handler:           handler,
 		ReadTimeout:       10 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      10 * time.Second,

@@ -10,7 +10,7 @@ import (
 )
 
 func TestGetPolicyUnreachableReturnsBoundedTimeErrorNotHang(t *testing.T) {
-	const serverDelay = 800 * time.Millisecond
+	const serverDelay = 200 * time.Millisecond
 	const clientTimeout = 50 * time.Millisecond
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

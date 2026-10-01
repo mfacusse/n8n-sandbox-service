@@ -40,11 +40,11 @@ make docker-local
 Cross-compile for a specific architecture:
 
 ```bash
-make docker-amd64    # API + runner + sandbox for linux/amd64
-make docker-arm64    # API + runner + sandbox for linux/arm64
+make docker-amd64    # API + scaler + runner + sandbox for linux/amd64
+make docker-arm64    # API + scaler + runner + sandbox for linux/arm64
 ```
 
-Individual image targets are also available (e.g. `make docker-api-amd64`, `make docker-runner-arm64`, `make docker-sandbox-amd64`). The Firecracker runner is amd64-only and can be built with `make docker-firecracker-runner-amd64`.
+Individual image targets are also available (e.g. `make docker-api-amd64`, `make docker-scaler-arm64`, `make docker-runner-arm64`, `make docker-sandbox-amd64`). The Firecracker runner is amd64-only and can be built with `make docker-firecracker-runner-amd64`.
 
 ## Running locally
 

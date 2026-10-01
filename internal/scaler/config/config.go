@@ -36,12 +36,24 @@ type PostgresConfig struct {
 	SSLMode  string
 }
 
-// DSN returns a libpq connection string for pgx/stdlib.
+// DSN returns a libpq connection string for pgx/stdlib. Each value is quoted
+// and escaped per libpq's keyword/value syntax, so passwords or other values
+// containing whitespace, quotes, or backslashes are passed through literally
+// instead of being misparsed as additional keywords or conninfo syntax.
 func (p PostgresConfig) DSN() string {
 	return fmt.Sprintf(
 		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		p.Host, p.Port, p.User, p.Password, p.Database, p.SSLMode,
+		quoteDSNValue(p.Host), p.Port, quoteDSNValue(p.User), quoteDSNValue(p.Password), quoteDSNValue(p.Database), quoteDSNValue(p.SSLMode),
 	)
+}
+
+// quoteDSNValue wraps v in single quotes, backslash-escaping any embedded
+// backslash or single quote, per libpq's connection-string syntax
+// (https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING).
+func quoteDSNValue(v string) string {
+	v = strings.ReplaceAll(v, `\`, `\\`)
+	v = strings.ReplaceAll(v, `'`, `\'`)
+	return "'" + v + "'"
 }
 
 // Config is the standalone scaler's full configuration.
@@ -114,8 +126,8 @@ func Load() (*Config, error) {
 	}
 
 	minNodes, err := strconv.Atoi(strings.TrimSpace(required["SANDBOX_SCALER_MIN_NODES"]))
-	if err != nil || minNodes < 0 {
-		return nil, fmt.Errorf("SANDBOX_SCALER_MIN_NODES must be a non-negative integer, got %q", required["SANDBOX_SCALER_MIN_NODES"])
+	if err != nil || minNodes < 1 {
+		return nil, fmt.Errorf("SANDBOX_SCALER_MIN_NODES must be a positive integer, got %q (0 can permanently strand the fleet at zero nodes: with no runners left, the capacity signal is unavailable and the scaler can never detect demand to scale back out)", required["SANDBOX_SCALER_MIN_NODES"])
 	}
 	maxNodes, err := strconv.Atoi(strings.TrimSpace(required["SANDBOX_SCALER_MAX_NODES"]))
 	if err != nil || maxNodes < minNodes {
@@ -128,6 +140,9 @@ func Load() (*Config, error) {
 	scaleIn, err := strconv.Atoi(strings.TrimSpace(required["SANDBOX_SCALER_SCALE_IN_THRESHOLD"]))
 	if err != nil || scaleIn < 0 {
 		return nil, fmt.Errorf("SANDBOX_SCALER_SCALE_IN_THRESHOLD must be a non-negative integer, got %q", required["SANDBOX_SCALER_SCALE_IN_THRESHOLD"])
+	}
+	if scaleIn <= scaleOut {
+		return nil, fmt.Errorf("SANDBOX_SCALER_SCALE_IN_THRESHOLD (%d) must be greater than SANDBOX_SCALER_SCALE_OUT_THRESHOLD (%d): without a dead zone between them, a scale-out can push free capacity straight past the scale-in threshold, and vice versa, causing the VMSS to oscillate", scaleIn, scaleOut)
 	}
 
 	cfg.Policy.MinNodes = minNodes
@@ -147,8 +162,8 @@ func Load() (*Config, error) {
 	cfg.Postgres.Database = strings.TrimSpace(required["SANDBOX_SCALER_POSTGRES_DB"])
 	if v := strings.TrimSpace(os.Getenv("SANDBOX_SCALER_POSTGRES_PORT")); v != "" {
 		port, err := strconv.Atoi(v)
-		if err != nil || port <= 0 {
-			return nil, fmt.Errorf("SANDBOX_SCALER_POSTGRES_PORT must be a positive integer, got %q", v)
+		if err != nil || port <= 0 || port > 65535 {
+			return nil, fmt.Errorf("SANDBOX_SCALER_POSTGRES_PORT must be an integer between 1 and 65535, got %q", v)
 		}
 		cfg.Postgres.Port = port
 	}
