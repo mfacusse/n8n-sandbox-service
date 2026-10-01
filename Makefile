@@ -5,9 +5,9 @@ BINDIR  := bin
 
 SHELL_FILES := $(shell git ls-files '*.sh')
 
-.PHONY: all daemon runner runner-docker runner-firecracker api test clean docker docker-local docker-arm64 docker-amd64 docker-api-arm64 docker-api-amd64 docker-runner-arm64 docker-runner-amd64 docker-firecracker-runner-amd64 docker-sandbox-arm64 docker-sandbox-amd64 fmt fmt-check vet shell-fmt shell-fmt-check shell-lint check-shell-files playground up down smoke sdk sdk-install sdk-build sdk-typecheck sdk-test sdk-fmt sdk-fmt-check sdk-lint
+.PHONY: all daemon runner runner-docker runner-firecracker api scaler test clean docker docker-local docker-arm64 docker-amd64 docker-api-arm64 docker-api-amd64 docker-runner-arm64 docker-runner-amd64 docker-firecracker-runner-amd64 docker-sandbox-arm64 docker-sandbox-amd64 docker-scaler-arm64 docker-scaler-amd64 fmt fmt-check vet shell-fmt shell-fmt-check shell-lint check-shell-files playground up down smoke sdk sdk-install sdk-build sdk-typecheck sdk-test sdk-fmt sdk-fmt-check sdk-lint
 
-all: daemon runner api
+all: daemon runner api scaler
 
 ## fmt: Format all Go files.
 fmt:
@@ -64,6 +64,10 @@ runner-firecracker:
 api:
 	GOOS=linux go build -o $(BINDIR)/api ./cmd/api
 
+## scaler: Build the standalone runner-VMSS capacity scaler (Linux).
+scaler:
+	GOOS=linux go build -o $(BINDIR)/scaler ./cmd/scaler
+
 ## playground: Start the playground UI (http://localhost:5173).
 playground: sdk-install sdk-build
 	cd playground && npm install && npm start
@@ -78,17 +82,17 @@ clean:
 
 ARCH := $(shell uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/')
 
-## docker: Build API + runner images for linux/amd64.
-docker: docker-api-amd64 docker-runner-amd64 docker-firecracker-runner-amd64
+## docker: Build API + scaler + runner images for linux/amd64.
+docker: docker-api-amd64 docker-scaler-amd64 docker-runner-amd64 docker-firecracker-runner-amd64
 
-## docker-local: Build API, runner, and sandbox images for current architecture.
-docker-local: docker-api-$(ARCH) docker-runner-$(ARCH) docker-sandbox-$(ARCH)
+## docker-local: Build API, scaler, runner, and sandbox images for current architecture.
+docker-local: docker-api-$(ARCH) docker-scaler-$(ARCH) docker-runner-$(ARCH) docker-sandbox-$(ARCH)
 
-## docker-arm64: Build API, runner, and sandbox images for linux/arm64.
-docker-arm64: docker-api-arm64 docker-runner-arm64 docker-sandbox-arm64
+## docker-arm64: Build API, scaler, runner, and sandbox images for linux/arm64.
+docker-arm64: docker-api-arm64 docker-scaler-arm64 docker-runner-arm64 docker-sandbox-arm64
 
-## docker-amd64: Build API, Docker runner, Firecracker runner, and sandbox images for linux/amd64.
-docker-amd64: docker-api-amd64 docker-runner-amd64 docker-firecracker-runner-amd64 docker-sandbox-amd64
+## docker-amd64: Build API, scaler, Docker runner, Firecracker runner, and sandbox images for linux/amd64.
+docker-amd64: docker-api-amd64 docker-scaler-amd64 docker-runner-amd64 docker-firecracker-runner-amd64 docker-sandbox-amd64
 
 ## docker-api-arm64: Build the API image for linux/arm64.
 docker-api-arm64:
@@ -97,6 +101,14 @@ docker-api-arm64:
 ## docker-api-amd64: Build the API image for linux/amd64.
 docker-api-amd64:
 	docker buildx build -f Dockerfile.api --platform linux/amd64 -t n8n-sandbox-service-api:latest-amd64 --load .
+
+## docker-scaler-arm64: Build the standalone scaler image for linux/arm64.
+docker-scaler-arm64:
+	docker buildx build -f Dockerfile.scaler --platform linux/arm64 -t n8n-sandbox-service-scaler:latest-arm64 --load .
+
+## docker-scaler-amd64: Build the standalone scaler image for linux/amd64.
+docker-scaler-amd64:
+	docker buildx build -f Dockerfile.scaler --platform linux/amd64 -t n8n-sandbox-service-scaler:latest-amd64 --load .
 
 ## docker-runner-arm64: Build the runner image for linux/arm64.
 docker-runner-arm64:

@@ -40,6 +40,9 @@ All services are configured via environment variables.
 | `SANDBOX_API_IDLE_DELETE_SAFETY_BUFFER` | `1m` | Added to a sandbox's idle window before deletion as a race guard (applied when either window above is > 0) |
 | `SANDBOX_API_IDLE_SWEEP_INTERVAL` | `1m` | How often the idle sweeper runs |
 | `SANDBOX_API_ORPHAN_REAP_BUFFER` | `5m` | How long after a runner deregisters before the idle sweeper removes its orphaned sandbox rows from the store |
+| `SANDBOX_API_SCALER_URL` | *(empty)* | Base URL of the standalone Runner Scaler's internal backchannel (e.g. `http://scaler.internal:8090`). Empty disables `GET /admin/scaler` (returns `503`). See [Runner capacity scaler](#runner-capacity-scaler). |
+| `SANDBOX_API_SCALER_TOKEN` | *(required if `SANDBOX_API_SCALER_URL` is set)* | Shared bearer token presented to the scaler's backchannel |
+| `SANDBOX_API_SCALER_TIMEOUT` | `3s` | Bounds each proxied `GET /admin/scaler` backchannel call; a timeout returns `503` rather than hanging the request |
 | `SANDBOX_API_GRPC_TLS_CERT_FILE` | *(required)* | Server certificate (PEM) for the registration gRPC listener |
 | `SANDBOX_API_GRPC_TLS_KEY_FILE` | *(required)* | Server private key (PEM) |
 | `SANDBOX_API_GRPC_TLS_CLIENT_CA_FILE` | *(required)* | CA bundle (PEM) that signed runner client certificates |
@@ -56,26 +59,36 @@ The idle sweeper waits `SANDBOX_API_ORPHAN_REAP_BUFFER` (default `5m`) after a r
 
 ## Runner capacity scaler
 
-Disabled unless every variable below is set (setting some but not all is a configuration error, not a partial default). Scales one Azure VMSS's node count from the runner registry's aggregate free-capacity signal. See `docs/architecture.md` for how it fits alongside the runner registry and idle sweeper, and `docs/scaler-production-hardening.md` for known gaps before relying on it in production.
+The Runner Scaler is a **standalone binary** (`cmd/scaler`), separate from the API — not configured by `SANDBOX_API_*`. Required variables below must all be set for it to start (setting some but not all is a configuration error, not a partial default). Scales one Azure VMSS's node count from the runner registry's aggregate free-capacity signal, read directly via its own Postgres connection (the API is not involved in reading the signal). See `docs/architecture.md`'s "Runner Scaler" component section for how it fits in, and `docs/scaler-production-hardening.md` for known gaps before relying on it in production.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `SANDBOX_API_SCALER_MIN_NODES` | *(required to enable)* | Floor the scaler will never scale below |
-| `SANDBOX_API_SCALER_MAX_NODES` | *(required to enable)* | Ceiling the scaler will never scale above. Equal to `MIN_NODES` disables scaling actions (evaluation still runs and is still logged/recorded) |
-| `SANDBOX_API_SCALER_SCALE_OUT_THRESHOLD` | *(required to enable)* | Aggregate free-capacity floor that triggers scale-out when crossed |
-| `SANDBOX_API_SCALER_SCALE_IN_THRESHOLD` | *(required to enable)* | Aggregate free-capacity ceiling that triggers scale-in once sustained |
-| `SANDBOX_API_SCALER_AZURE_SUBSCRIPTION_ID` | *(required to enable)* | Azure subscription holding the VMSS |
-| `SANDBOX_API_SCALER_AZURE_RESOURCE_GROUP` | *(required to enable)* | Resource group holding the VMSS |
-| `SANDBOX_API_SCALER_AZURE_VMSS_NAME` | *(required to enable)* | Name of the VMSS to scale |
-| `SANDBOX_API_SCALER_SCALE_IN_SUSTAINED_FOR` | `10m` | How long the scale-in condition must hold continuously before acting on it |
-| `SANDBOX_API_SCALER_COOLDOWN` | `5m` | Minimum time between any two scale actions, in either direction |
-| `SANDBOX_API_SCALER_EVAL_INTERVAL` | `1m` | How often the scaler evaluates the capacity signal |
-| `SANDBOX_API_SCALER_AZURE_CLIENT_ID` | *(empty)* | Workload-identity federated credential client ID. Empty falls back to the ambient `AZURE_CLIENT_ID` set by the Azure workload identity webhook |
-| `SANDBOX_API_SCALER_AZURE_TENANT_ID` | *(empty)* | Workload-identity federated credential tenant ID. Empty falls back to the ambient `AZURE_TENANT_ID` |
+| `SANDBOX_SCALER_MIN_NODES` | *(required)* | Floor the scaler will never scale below |
+| `SANDBOX_SCALER_MAX_NODES` | *(required)* | Ceiling the scaler will never scale above. Equal to `MIN_NODES` disables scaling actions (evaluation still runs and is still logged/recorded) |
+| `SANDBOX_SCALER_SCALE_OUT_THRESHOLD` | *(required)* | Aggregate free-capacity floor that triggers scale-out when crossed |
+| `SANDBOX_SCALER_SCALE_IN_THRESHOLD` | *(required)* | Aggregate free-capacity ceiling that triggers scale-in once sustained |
+| `SANDBOX_SCALER_AZURE_SUBSCRIPTION_ID` | *(required)* | Azure subscription holding the VMSS |
+| `SANDBOX_SCALER_AZURE_RESOURCE_GROUP` | *(required)* | Resource group holding the VMSS |
+| `SANDBOX_SCALER_AZURE_VMSS_NAME` | *(required)* | Name of the VMSS to scale |
+| `SANDBOX_SCALER_POSTGRES_HOST` | *(required)* | Postgres host (the same database the API's `postgres` store backend uses) |
+| `SANDBOX_SCALER_POSTGRES_USER` | *(required)* | Postgres user |
+| `SANDBOX_SCALER_POSTGRES_PASSWORD` | *(required)* | Postgres password |
+| `SANDBOX_SCALER_POSTGRES_DB` | *(required)* | Postgres database name |
+| `SANDBOX_SCALER_API_TOKEN` | *(required)* | Shared bearer token the tenant-facing API must present to the internal backchannel (`SANDBOX_API_SCALER_TOKEN` on the API side) |
+| `SANDBOX_SCALER_POSTGRES_PORT` | `5432` | Postgres port |
+| `SANDBOX_SCALER_POSTGRES_SSLMODE` | `require` | Postgres TLS mode |
+| `SANDBOX_SCALER_SCALE_IN_SUSTAINED_FOR` | `10m` | How long the scale-in condition must hold continuously before acting on it |
+| `SANDBOX_SCALER_COOLDOWN` | `5m` | Minimum time between any two scale actions, in either direction |
+| `SANDBOX_SCALER_EVAL_INTERVAL` | `1m` | How often the scaler evaluates the capacity signal |
+| `SANDBOX_SCALER_RUNNER_HEARTBEAT_GRACE` | `45s` | How fresh a runner's last heartbeat must be to count toward the capacity signal (same semantics as the API's `SANDBOX_API_RUNNER_HEARTBEAT_GRACE`) |
+| `SANDBOX_SCALER_AZURE_CLIENT_ID` | *(empty)* | Workload-identity federated credential client ID. Empty falls back to the ambient `AZURE_CLIENT_ID` set by the Azure workload identity webhook |
+| `SANDBOX_SCALER_AZURE_TENANT_ID` | *(empty)* | Workload-identity federated credential tenant ID. Empty falls back to the ambient `AZURE_TENANT_ID` |
+| `SANDBOX_SCALER_LISTEN_ADDR` | `:8090` | Internal-only HTTP listen address for the `GET /policy` backchannel |
+| `SANDBOX_SCALER_LOG_LEVEL` | `info` | Minimum log severity |
 
-**Multi-pod (Postgres):** like the idle sweeper, the scaler uses the same Postgres advisory lock so only one pod evaluates and acts per cycle when `SANDBOX_API_STORE=postgres`.
+**Single replica:** the scaler runs with no leader-election/locking (unlike the API's idle sweeper) — deploy it with exactly one replica. At-most-one-active-evaluation is guaranteed structurally, not by coordination.
 
-**Inspecting the active policy and last decision:** `GET /admin/scaler` (admin API key required) — see `docs/API.md`.
+**Inspecting the active policy and last decision:** `GET /admin/scaler` on the API (admin API key required) — proxies to this component's internal `GET /policy`. See `docs/API.md` and `SANDBOX_API_SCALER_URL`/`SANDBOX_API_SCALER_TOKEN` above.
 
 ## Runner
 

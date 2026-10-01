@@ -3,6 +3,8 @@ package config
 import (
 	"log/slog"
 	"os"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -477,5 +479,46 @@ func TestLoadAPIMetricsListenAddrLoadsWhenMetricsDisabled(t *testing.T) {
 	}
 	if cfg.MetricsListenAddr != ":9100" {
 		t.Fatalf("MetricsListenAddr: want :9100, got %s", cfg.MetricsListenAddr)
+	}
+}
+
+// TestAPIConfigHasNoScalerOrAzureFields is a structural regression guard for
+// 002-scaler-standalone-service's least-privilege goal: the capacity
+// scaler's policy and Azure credentials must live only in
+// internal/scaler/config, never back on APIConfig. Catches a future
+// accidental re-introduction (e.g. a merge or copy-paste) that would put
+// Azure/VMSS material back on the API's config surface.
+func TestAPIConfigHasNoScalerOrAzureFields(t *testing.T) {
+	typ := reflect.TypeOf(APIConfig{})
+	for i := 0; i < typ.NumField(); i++ {
+		name := typ.Field(i).Name
+		if strings.Contains(name, "Azure") || strings.Contains(name, "VMSS") || name == "Scaler" {
+			t.Fatalf("APIConfig.%s: APIConfig must not carry scaler policy or Azure/VMSS fields (those belong to internal/scaler/config)", name)
+		}
+	}
+}
+
+func TestLoadAPIScalerProxyRequiresTokenWhenURLSet(t *testing.T) {
+	t.Setenv("SANDBOX_API_KEYS", "test-key")
+	t.Setenv("SANDBOX_API_RUNNER_REGISTRATION_TOKEN", "reg-token")
+	t.Setenv("SANDBOX_API_SCALER_URL", "http://scaler.internal:8090")
+	setRequiredGRPCMTLS(t)
+
+	if _, err := LoadAPI(); err == nil {
+		t.Fatal("expected LoadAPI to reject SANDBOX_API_SCALER_URL set without SANDBOX_API_SCALER_TOKEN")
+	}
+}
+
+func TestLoadAPIScalerProxyDisabledByDefault(t *testing.T) {
+	t.Setenv("SANDBOX_API_KEYS", "test-key")
+	t.Setenv("SANDBOX_API_RUNNER_REGISTRATION_TOKEN", "reg-token")
+	setRequiredGRPCMTLS(t)
+
+	cfg, err := LoadAPI()
+	if err != nil {
+		t.Fatalf("LoadAPI() failed: %v", err)
+	}
+	if cfg.ScalerURL != "" {
+		t.Fatalf("ScalerURL: want empty (disabled) by default, got %q", cfg.ScalerURL)
 	}
 }

@@ -21,10 +21,10 @@ import (
 	"github.com/n8n-io/sandbox-service/internal/api/grpc/pb"
 	"github.com/n8n-io/sandbox-service/internal/api/registry"
 	"github.com/n8n-io/sandbox-service/internal/api/store"
-	"github.com/n8n-io/sandbox-service/internal/azurescale"
 	"github.com/n8n-io/sandbox-service/internal/grpctls"
 	"github.com/n8n-io/sandbox-service/internal/metrics"
 	"github.com/n8n-io/sandbox-service/internal/obs"
+	"github.com/n8n-io/sandbox-service/internal/scalerclient"
 	"google.golang.org/grpc"
 )
 
@@ -100,31 +100,20 @@ func main() {
 	}
 
 	api.LogIdleSweepConfig(cfg)
-	api.LogScalerConfig(cfg)
 
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
 	defer sweepCancel()
 	api.StartIdleSweeper(sweepCtx, sandboxStore, runnerReg, cfg, sweepLockDB)
 
-	var scaler *api.CapacityScaler
-	if cfg.Scaler != nil {
-		vmss, err := azurescale.New(azurescale.Target{
-			SubscriptionID:           cfg.Scaler.AzureSubscriptionID,
-			ResourceGroup:            cfg.Scaler.AzureResourceGroup,
-			VMSSName:                 cfg.Scaler.AzureVMSSName,
-			WorkloadIdentityClientID: cfg.Scaler.AzureClientID,
-			TenantID:                 cfg.Scaler.AzureTenantID,
-		})
-		if err != nil {
-			slog.Error("failed to create vmss scaler client", "error", err)
-			os.Exit(1)
-		}
-		scalerRec := metrics.NewScalerRecorder(cfg.MetricsEnabled)
-		scaler = api.NewCapacityScaler(cfg, runnerReg, vmss, scalerRec)
-		scaler.Start(sweepCtx, sweepLockDB)
+	var scalerClient *scalerclient.Client
+	if cfg.ScalerURL != "" {
+		scalerClient = scalerclient.New(cfg.ScalerURL, cfg.ScalerToken, cfg.ScalerTimeout)
+		slog.Info("scaler proxy enabled", "url", cfg.ScalerURL)
+	} else {
+		slog.Info("scaler proxy disabled: SANDBOX_API_SCALER_URL not set")
 	}
 
-	handler, err := api.NewGatewayRouter(sandboxStore, cfg, runnerReg, mrec, scaler)
+	handler, err := api.NewGatewayRouter(sandboxStore, cfg, runnerReg, mrec, scalerClient)
 	if err != nil {
 		slog.Error("failed to create api router", "error", err)
 		os.Exit(1)

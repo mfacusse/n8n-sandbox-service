@@ -63,6 +63,8 @@ The system has three tiers:
 
 Multiple runners can register with a single API gateway for horizontal scaling. The API distributes sandbox creation across eligible runners using load-aware placement (lowest `capacity_used`).
 
+A fourth, optional control-plane component — the **Runner Scaler** (`cmd/scaler/`) — runs separately from these three tiers. It reads the same runner registry data directly (its own Postgres connection, not through the API) and adjusts the runner VMSS's node count; see the Components section below.
+
 ### Multi-pod API (Postgres)
 
 For multiple API replicas (e.g. n8n Cloud), set `SANDBOX_API_STORE=postgres`. All pods share:
@@ -90,13 +92,26 @@ The API gateway is the single public-facing service. It exposes a REST API for s
 | Store | `internal/api/store/` | Sandbox metadata (`sqlite` default, `postgres` for multi-pod) |
 | Sweeper lock | `internal/api/store/postgres.go` | Postgres advisory lock for idle sweeper leadership |
 | Idle sweeper | `internal/api/ttl.go` | Periodic scan to stop/delete idle sandboxes (ephemeral ones are deleted, never stopped) |
-| Runner scaler | `internal/api/scaler.go` | Periodic scan of the runner registry's aggregate free capacity; scales one Azure VMSS's node count within a configured min/max/cooldown policy |
-| Azure VMSS client | `internal/azurescale/` | `armcompute`/`azidentity`-backed `VMSSScaler`, behind an interface so the scaler's decision logic is testable without live Azure calls |
+| Scaler proxy client | `internal/scalerclient/` | `GET /admin/scaler`'s client for the standalone Runner Scaler's internal backchannel (below) — the API holds no Azure/VMSS material itself |
 | Config | `internal/api/config/` | Environment variable parsing and validation |
 
 **Middleware chain:** Recovery → CORS (optional) → Logging → Auth (API key) → Metrics (optional)
 
-**Runner scaler:** Disabled unless `SANDBOX_API_SCALER_*` is fully configured (`docs/configuration.md`). Runs as a ticker-driven goroutine in the same process as the idle sweeper, reusing the same Postgres advisory lock so only one API pod acts per evaluation cycle in multi-pod deployments. Reads the runner registry's aggregate free capacity (across healthy, non-stale runners) as its sole scaling signal, and calls the target VMSS's scale-set API to adjust node count. `GET /admin/scaler` (admin key) exposes the active policy and the most recent decision. See `docs/scaler-production-hardening.md` for known gaps before relying on this in production.
+### Runner Scaler
+
+**Source:** `cmd/scaler/`, `internal/scaler/`
+
+A standalone component, separate from the API Gateway (its own binary, release cadence, and Azure identity — see `specs/002-scaler-standalone-service/spec.md` for why it was extracted out of the API Gateway). Disabled/not deployed unless `SANDBOX_SCALER_*` is fully configured (`docs/configuration.md`).
+
+| Subcomponent | Location | Responsibility |
+| --- | --- | --- |
+| Evaluation loop | `internal/scaler/scaler.go` | Periodic (ticker-driven) decision logic: threshold/cooldown/min-max math, deterministic scale-out-over-scale-in precedence |
+| Capacity signal source | `internal/scaler/source_postgres.go` | Direct read of the shared `runners` table (same system of record the API's Postgres registry backend uses) via the scaler's own Postgres connection, behind a `RunnerSource` interface |
+| Azure VMSS client | `internal/azurescale/` | `armcompute`/`azidentity`-backed `VMSSScaler`, behind an interface so the scaler's decision logic is testable without live Azure calls |
+| Internal backchannel | `internal/scaler/server.go` | `GET /policy` — bearer-token-authenticated, in-cluster-only; the source `GET /admin/scaler` proxies to |
+| Config | `internal/scaler/config/` | `SANDBOX_SCALER_*` environment variable parsing and validation |
+
+Runs as a single replica (no leader-election/locking — at-most-one-active-evaluation is guaranteed structurally by there being exactly one instance). Reads the runner registry's aggregate free capacity (across healthy, non-stale runners) as its sole scaling signal, and calls the target VMSS's scale-set API to adjust node count. `GET /admin/scaler` on the API Gateway (admin key) proxies to this component's `GET /policy` to expose the active policy and the most recent decision — see `contracts/scaler-internal-api.md` and `contracts/admin-scaler-api.md` in `specs/002-scaler-standalone-service/`. See `docs/scaler-production-hardening.md` for known gaps (including required IAM/Helm-chart wiring) before relying on this in production.
 
 ### Runner
 

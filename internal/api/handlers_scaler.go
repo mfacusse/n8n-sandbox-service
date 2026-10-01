@@ -1,83 +1,37 @@
 package api
 
-import "net/http"
+import (
+	"errors"
+	"net/http"
 
-type scalerPolicyResponse struct {
-	MinNodes            int    `json:"min_nodes"`
-	MaxNodes            int    `json:"max_nodes"`
-	ScaleOutThreshold   int    `json:"scale_out_threshold"`
-	ScaleInThreshold    int    `json:"scale_in_threshold"`
-	ScaleInSustainedFor string `json:"scale_in_sustained_for"`
-	Cooldown            string `json:"cooldown"`
-	EvalInterval        string `json:"eval_interval"`
-}
-
-type scalerVMSSResponse struct {
-	SubscriptionID string `json:"subscription_id"`
-	ResourceGroup  string `json:"resource_group"`
-	VMSSName       string `json:"vmss_name"`
-}
-
-type scalerDecisionResponse struct {
-	ObservedAt       int64  `json:"observed_at"`
-	FreeCapacity     int    `json:"free_capacity"`
-	TotalCapacity    int    `json:"total_capacity"`
-	SignalAvailable  bool   `json:"signal_available"`
-	CurrentNodeCount int    `json:"current_node_count"`
-	Decision         string `json:"decision"`
-	Reason           string `json:"reason"`
-	TargetNodeCount  *int   `json:"target_node_count,omitempty"`
-	Error            string `json:"error,omitempty"`
-}
-
-type scalerResponse struct {
-	Policy       scalerPolicyResponse    `json:"policy"`
-	VMSS         scalerVMSSResponse      `json:"vmss"`
-	LastDecision *scalerDecisionResponse `json:"last_decision"`
-}
+	"github.com/n8n-io/sandbox-service/internal/scalerclient"
+)
 
 // handleGetScaler serves GET /admin/scaler: the active scaling policy, VMSS
-// target, and the most recent evaluation's outcome (FR-007). scaler is nil
-// when the capacity scaler is disabled, in which case this returns 503.
-func handleGetScaler(scaler *CapacityScaler) http.HandlerFunc {
+// target, and the most recent evaluation's outcome, proxied from the
+// standalone scaler component's internal backchannel
+// (contracts/scaler-internal-api.md in specs/002-scaler-standalone-service).
+// client is nil when the scaler proxy is not configured (SANDBOX_API_SCALER_URL
+// unset), in which case this returns 503.
+func handleGetScaler(client *scalerclient.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireAdmin(w, r) {
 			return
 		}
-		if scaler == nil {
-			writeError(w, http.StatusServiceUnavailable, "scaler is disabled: SANDBOX_API_SCALER_* is not configured")
+		if client == nil {
+			writeError(w, http.StatusServiceUnavailable, "scaler is disabled: SANDBOX_API_SCALER_URL is not configured")
 			return
 		}
 
-		policy := scaler.Policy()
-		resp := scalerResponse{
-			Policy: scalerPolicyResponse{
-				MinNodes:            policy.MinNodes,
-				MaxNodes:            policy.MaxNodes,
-				ScaleOutThreshold:   policy.ScaleOutThreshold,
-				ScaleInThreshold:    policy.ScaleInThreshold,
-				ScaleInSustainedFor: policy.ScaleInSustainedFor.String(),
-				Cooldown:            policy.Cooldown.String(),
-				EvalInterval:        policy.EvalInterval.String(),
-			},
-			VMSS: scalerVMSSResponse{
-				SubscriptionID: policy.AzureSubscriptionID,
-				ResourceGroup:  policy.AzureResourceGroup,
-				VMSSName:       policy.AzureVMSSName,
-			},
-		}
-		if last := scaler.LastDecision(); last != nil {
-			resp.LastDecision = &scalerDecisionResponse{
-				ObservedAt:       last.ObservedAt.Unix(),
-				FreeCapacity:     last.FreeCapacity,
-				TotalCapacity:    last.TotalCapacity,
-				SignalAvailable:  last.SignalAvailable,
-				CurrentNodeCount: last.CurrentNodeCount,
-				Decision:         last.Decision,
-				Reason:           last.Reason,
-				TargetNodeCount:  last.TargetNodeCount,
-				Error:            last.Error,
+		resp, err := client.GetPolicy(r.Context())
+		if err != nil {
+			switch {
+			case errors.Is(err, scalerclient.ErrUnauthorized):
+				writeError(w, http.StatusBadGateway, "scaler auth misconfigured")
+			default:
+				writeError(w, http.StatusServiceUnavailable, "scaler unreachable")
 			}
+			return
 		}
 		writeJSON(w, http.StatusOK, resp)
 	}

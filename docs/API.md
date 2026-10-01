@@ -752,7 +752,7 @@ curl "http://localhost:8080/sandboxes/550e8400-e29b-41d4-a716-446655440000/stat?
 
 ### GET /admin/scaler
 
-The runner-VMSS capacity scaler's active policy, VMSS target, and most recent evaluation (see `docs/configuration.md` for the `SANDBOX_API_SCALER_*` variables this reflects). Admin API key required.
+The runner-VMSS capacity scaler's active policy, VMSS target, and most recent evaluation. Admin API key required. Since `002-scaler-standalone-service`, the scaler is its own component (`cmd/scaler`) — this endpoint proxies to its internal `GET /policy` backchannel (see `SANDBOX_API_SCALER_URL`/`SANDBOX_API_SCALER_TOKEN` in `docs/configuration.md`) rather than reading in-process state.
 
 **Response:** `200 OK`
 
@@ -787,7 +787,11 @@ The runner-VMSS capacity scaler's active policy, VMSS target, and most recent ev
 
 `last_decision` is `null` if no evaluation cycle has completed yet (the process just started).
 
-**Errors:** `503` the scaler is disabled (`SANDBOX_API_SCALER_MIN_NODES`/`MAX_NODES` etc. unset).
+**Errors:**
+
+- `503` — the scaler proxy is disabled (`SANDBOX_API_SCALER_URL` unset) **or** the standalone scaler component is unreachable (down, not deployed, or the backchannel call timed out)
+- `502` — the backchannel rejected the API's token (`SANDBOX_API_SCALER_TOKEN` and the scaler's `SANDBOX_SCALER_API_TOKEN` disagree) — a deployment misconfiguration, distinct from the scaler simply being down
+- `401` / `403` — missing/invalid caller API key, or a tenant key (admin-only)
 
 ```sh
 curl -H "X-Api-Key: YOUR_ADMIN_KEY" http://localhost:8080/admin/scaler

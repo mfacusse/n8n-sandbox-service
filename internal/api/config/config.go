@@ -27,9 +27,7 @@ const (
 	defaultPostgresPort     = 5432
 	defaultPostgresSSLMode  = "require"
 	defaultMaxSandboxes     = 50
-	defaultScalerCooldown   = 5 * time.Minute
-	defaultScalerSustained  = 10 * time.Minute
-	defaultScalerEvalPeriod = time.Minute
+	defaultScalerTimeout    = 3 * time.Second
 )
 
 // StoreBackend selects the API sandbox store implementation.
@@ -141,47 +139,17 @@ type APIConfig struct {
 	RunnerControlGRPCClientKeyFile    string
 	RunnerControlGRPCClientServerName string // optional; defaults to runner dial host
 
-	// Scaler holds the runner-VMSS capacity scaler's policy and Azure target.
-	// Nil when the scaler is disabled (no SANDBOX_API_SCALER_* vars set).
-	Scaler *ScalerConfig
-}
-
-// ScalerConfig is the policy and Azure VMSS target for the capacity scaler.
-// See docs/configuration.md for the SANDBOX_API_SCALER_* variables this is
-// built from.
-type ScalerConfig struct {
-	// MinNodes is the floor the scaler will never scale below.
-	MinNodes int
-	// MaxNodes is the ceiling the scaler will never scale above. Equal to
-	// MinNodes disables scaling actions entirely (evaluation still runs and is
-	// still logged/recorded).
-	MaxNodes int
-	// ScaleOutThreshold is the aggregate free-capacity floor that triggers
-	// scale-out when crossed.
-	ScaleOutThreshold int
-	// ScaleInThreshold is the aggregate free-capacity ceiling that triggers
-	// scale-in once sustained for ScaleInSustainedFor.
-	ScaleInThreshold int
-	// ScaleInSustainedFor is how long the scale-in condition must hold
-	// continuously before the scaler acts on it.
-	ScaleInSustainedFor time.Duration
-	// Cooldown is the minimum time between any two scale actions, in either
-	// direction.
-	Cooldown time.Duration
-	// EvalInterval is how often the scaler evaluates the capacity signal.
-	EvalInterval time.Duration
-
-	// AzureSubscriptionID, AzureResourceGroup, and AzureVMSSName identify the
-	// single VMSS this scaler targets.
-	AzureSubscriptionID string
-	AzureResourceGroup  string
-	AzureVMSSName       string
-	// AzureClientID and AzureTenantID select the workload-identity federated
-	// credential. Empty falls back to the ambient AZURE_CLIENT_ID /
-	// AZURE_TENANT_ID environment variables set by the Azure workload identity
-	// webhook.
-	AzureClientID string
-	AzureTenantID string
+	// ScalerURL is the base URL of the standalone scaler component's internal
+	// backchannel (e.g. http://scaler.internal:8090). Empty disables the
+	// GET /admin/scaler proxy (it returns 503). See
+	// specs/002-scaler-standalone-service — the scaler itself is a separate
+	// binary/component (cmd/scaler), not configured by this package.
+	ScalerURL string
+	// ScalerToken is the shared bearer token presented to the standalone
+	// scaler's backchannel. Required if ScalerURL is set.
+	ScalerToken string
+	// ScalerTimeout bounds each proxied GET /admin/scaler backchannel call.
+	ScalerTimeout time.Duration
 }
 
 // LoadAPI reads API gateway configuration from environment variables.
@@ -420,110 +388,21 @@ func LoadAPI() (*APIConfig, error) {
 		}
 	}
 
-	scaler, err := loadScalerConfig()
-	if err != nil {
-		return nil, err
-	}
-	cfg.Scaler = scaler
-
-	return cfg, nil
-}
-
-// loadScalerConfig reads SANDBOX_API_SCALER_* variables. The scaler is
-// disabled (nil, nil) when none of its required variables are set. Setting
-// some but not all of them is a configuration error rather than a silent
-// partial default, matching the all-or-nothing style already used for the
-// gRPC TLS variable groups above.
-func loadScalerConfig() (*ScalerConfig, error) {
-	required := map[string]string{
-		"SANDBOX_API_SCALER_MIN_NODES":             os.Getenv("SANDBOX_API_SCALER_MIN_NODES"),
-		"SANDBOX_API_SCALER_MAX_NODES":             os.Getenv("SANDBOX_API_SCALER_MAX_NODES"),
-		"SANDBOX_API_SCALER_SCALE_OUT_THRESHOLD":   os.Getenv("SANDBOX_API_SCALER_SCALE_OUT_THRESHOLD"),
-		"SANDBOX_API_SCALER_SCALE_IN_THRESHOLD":    os.Getenv("SANDBOX_API_SCALER_SCALE_IN_THRESHOLD"),
-		"SANDBOX_API_SCALER_AZURE_SUBSCRIPTION_ID": os.Getenv("SANDBOX_API_SCALER_AZURE_SUBSCRIPTION_ID"),
-		"SANDBOX_API_SCALER_AZURE_RESOURCE_GROUP":  os.Getenv("SANDBOX_API_SCALER_AZURE_RESOURCE_GROUP"),
-		"SANDBOX_API_SCALER_AZURE_VMSS_NAME":       os.Getenv("SANDBOX_API_SCALER_AZURE_VMSS_NAME"),
-	}
-	setCount := 0
-	for _, v := range required {
-		if strings.TrimSpace(v) != "" {
-			setCount++
-		}
-	}
-	if setCount == 0 {
-		return nil, nil
-	}
-	if setCount != len(required) {
-		return nil, fmt.Errorf("%s are all required to enable the scaler; set none to leave it disabled", strings.Join(scalerRequiredVarNames(), ", "))
-	}
-
-	minNodes, err := strconv.Atoi(strings.TrimSpace(required["SANDBOX_API_SCALER_MIN_NODES"]))
-	if err != nil || minNodes < 0 {
-		return nil, fmt.Errorf("SANDBOX_API_SCALER_MIN_NODES must be a non-negative integer, got %q", required["SANDBOX_API_SCALER_MIN_NODES"])
-	}
-	maxNodes, err := strconv.Atoi(strings.TrimSpace(required["SANDBOX_API_SCALER_MAX_NODES"]))
-	if err != nil || maxNodes < minNodes {
-		return nil, fmt.Errorf("SANDBOX_API_SCALER_MAX_NODES must be an integer >= SANDBOX_API_SCALER_MIN_NODES (%d), got %q", minNodes, required["SANDBOX_API_SCALER_MAX_NODES"])
-	}
-	scaleOut, err := strconv.Atoi(strings.TrimSpace(required["SANDBOX_API_SCALER_SCALE_OUT_THRESHOLD"]))
-	if err != nil || scaleOut < 0 {
-		return nil, fmt.Errorf("SANDBOX_API_SCALER_SCALE_OUT_THRESHOLD must be a non-negative integer, got %q", required["SANDBOX_API_SCALER_SCALE_OUT_THRESHOLD"])
-	}
-	scaleIn, err := strconv.Atoi(strings.TrimSpace(required["SANDBOX_API_SCALER_SCALE_IN_THRESHOLD"]))
-	if err != nil || scaleIn < 0 {
-		return nil, fmt.Errorf("SANDBOX_API_SCALER_SCALE_IN_THRESHOLD must be a non-negative integer, got %q", required["SANDBOX_API_SCALER_SCALE_IN_THRESHOLD"])
-	}
-
-	cfg := &ScalerConfig{
-		MinNodes:            minNodes,
-		MaxNodes:            maxNodes,
-		ScaleOutThreshold:   scaleOut,
-		ScaleInThreshold:    scaleIn,
-		ScaleInSustainedFor: defaultScalerSustained,
-		Cooldown:            defaultScalerCooldown,
-		EvalInterval:        defaultScalerEvalPeriod,
-		AzureSubscriptionID: strings.TrimSpace(required["SANDBOX_API_SCALER_AZURE_SUBSCRIPTION_ID"]),
-		AzureResourceGroup:  strings.TrimSpace(required["SANDBOX_API_SCALER_AZURE_RESOURCE_GROUP"]),
-		AzureVMSSName:       strings.TrimSpace(required["SANDBOX_API_SCALER_AZURE_VMSS_NAME"]),
-		AzureClientID:       strings.TrimSpace(os.Getenv("SANDBOX_API_SCALER_AZURE_CLIENT_ID")),
-		AzureTenantID:       strings.TrimSpace(os.Getenv("SANDBOX_API_SCALER_AZURE_TENANT_ID")),
-	}
-
-	if v := strings.TrimSpace(os.Getenv("SANDBOX_API_SCALER_SCALE_IN_SUSTAINED_FOR")); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil || d < 0 {
-			return nil, fmt.Errorf("SANDBOX_API_SCALER_SCALE_IN_SUSTAINED_FOR must be a non-negative duration, got %q", v)
-		}
-		cfg.ScaleInSustainedFor = d
-	}
-	if v := strings.TrimSpace(os.Getenv("SANDBOX_API_SCALER_COOLDOWN")); v != "" {
+	cfg.ScalerURL = strings.TrimSpace(os.Getenv("SANDBOX_API_SCALER_URL"))
+	cfg.ScalerToken = os.Getenv("SANDBOX_API_SCALER_TOKEN")
+	cfg.ScalerTimeout = defaultScalerTimeout
+	if v := strings.TrimSpace(os.Getenv("SANDBOX_API_SCALER_TIMEOUT")); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d <= 0 {
-			return nil, fmt.Errorf("SANDBOX_API_SCALER_COOLDOWN must be a positive duration, got %q", v)
+			return nil, fmt.Errorf("SANDBOX_API_SCALER_TIMEOUT must be a positive duration, got %q", v)
 		}
-		cfg.Cooldown = d
+		cfg.ScalerTimeout = d
 	}
-	if v := strings.TrimSpace(os.Getenv("SANDBOX_API_SCALER_EVAL_INTERVAL")); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil || d <= 0 {
-			return nil, fmt.Errorf("SANDBOX_API_SCALER_EVAL_INTERVAL must be a positive duration, got %q", v)
-		}
-		cfg.EvalInterval = d
+	if cfg.ScalerURL != "" && cfg.ScalerToken == "" {
+		return nil, fmt.Errorf("SANDBOX_API_SCALER_TOKEN must be set when SANDBOX_API_SCALER_URL is set")
 	}
 
 	return cfg, nil
-}
-
-func scalerRequiredVarNames() []string {
-	return []string{
-		"SANDBOX_API_SCALER_MIN_NODES",
-		"SANDBOX_API_SCALER_MAX_NODES",
-		"SANDBOX_API_SCALER_SCALE_OUT_THRESHOLD",
-		"SANDBOX_API_SCALER_SCALE_IN_THRESHOLD",
-		"SANDBOX_API_SCALER_AZURE_SUBSCRIPTION_ID",
-		"SANDBOX_API_SCALER_AZURE_RESOURCE_GROUP",
-		"SANDBOX_API_SCALER_AZURE_VMSS_NAME",
-	}
 }
 
 // MetricsOnMainListener reports whether /metrics is served by the public API
