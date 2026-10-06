@@ -223,6 +223,10 @@ runner:
   # /var/lib/docker-pool when config.defaultDiskQuotaMb is above 0, because the
   # quota pool image needs the bounded volume then. See the chart README
   # section 'Disk Quotas'.
+  #
+  # Both isolations get an emptyDir by default. Only privileged isolation can
+  # use persistence, which creates one PVC per runner pod. See the chart README
+  # section 'Docker Data Root'.
   dockerDataRoot:
     persistence:
       enabled: false
@@ -230,8 +234,6 @@ runner:
       storageClass: ""
       accessModes:
         - ReadWriteOnce
-    # Used only with isolation=privileged when persistence is disabled.
-    # Bounds the inner Docker daemon's image layers and sandbox filesystems.
     emptyDir:
       sizeLimit: 64Gi
 
