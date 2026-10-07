@@ -162,6 +162,11 @@ type APIConfig struct {
 	RunnerControlGRPCClientCertFile   string
 	RunnerControlGRPCClientKeyFile    string
 	RunnerControlGRPCClientServerName string // optional; defaults to runner dial host
+
+	// ScalerURL is the base URL of the externally-operated Runner Scaler.
+	// Empty disables GET /admin/scaler (it returns 503). No other scaler
+	// setting exists — deliberately minimal (specs/005-simple-scaler-proxy).
+	ScalerURL string
 }
 
 // LoadAPI reads API gateway configuration from environment variables.
@@ -422,6 +427,8 @@ func LoadAPI() (*APIConfig, error) {
 			return nil, fmt.Errorf("SANDBOX_API_POSTGRES_DB must be set when SANDBOX_API_STORE=postgres")
 		}
 	}
+
+	cfg.ScalerURL = strings.TrimSpace(os.Getenv("SANDBOX_API_SCALER_URL"))
 
 	return cfg, nil
 }
