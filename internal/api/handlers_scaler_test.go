@@ -88,6 +88,79 @@ func TestGetScalerReturns503WhenUnreachable(t *testing.T) {
 	}
 }
 
+func TestGetScalerReturns503OnRedirect(t *testing.T) {
+	followed := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/login" {
+			followed = true
+			_, _ = w.Write([]byte("login page"))
+			return
+		}
+		http.Redirect(w, r, "/login", http.StatusFound)
+	}))
+	defer backend.Close()
+
+	router := newTestGatewayWithScalerURL(t, "admin-key", backend.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/scaler", nil)
+	req.Header.Set("X-Api-Key", "admin-key")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected %d, got %d body=%s", http.StatusServiceUnavailable, rr.Code, rr.Body.String())
+	}
+	if followed {
+		t.Fatal("redirect was followed")
+	}
+}
+
+func TestGetScalerForwardsAuthorizationButNotAPIKey(t *testing.T) {
+	var gotAuth, gotAPIKey string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotAPIKey = r.Header.Get("X-Api-Key")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer backend.Close()
+
+	router := newTestGatewayWithScalerURL(t, "admin-key", backend.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/scaler", nil)
+	req.Header.Set("X-Api-Key", "admin-key")
+	req.Header.Set("Authorization", "Bearer scaler-token")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d body=%s", http.StatusOK, rr.Code, rr.Body.String())
+	}
+	if gotAuth != "Bearer scaler-token" {
+		t.Fatalf("scaler saw Authorization %q, want the client's value", gotAuth)
+	}
+	if gotAPIKey != "" {
+		t.Fatalf("admin X-Api-Key leaked to the scaler: %q", gotAPIKey)
+	}
+}
+
+func TestGetScalerReturns503WhenBodyTooLarge(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(make([]byte, scalerMaxBodyBytes+1))
+	}))
+	defer backend.Close()
+
+	router := newTestGatewayWithScalerURL(t, "admin-key", backend.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/scaler", nil)
+	req.Header.Set("X-Api-Key", "admin-key")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected %d, got %d", http.StatusServiceUnavailable, rr.Code)
+	}
+}
+
 func TestGetScalerRequiresAdminKey(t *testing.T) {
 	router := newTestGatewayWithScalerURL(t, "admin-key", "")
 

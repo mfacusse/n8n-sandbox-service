@@ -164,8 +164,7 @@ type APIConfig struct {
 	RunnerControlGRPCClientServerName string // optional; defaults to runner dial host
 
 	// ScalerURL is the base URL of the externally-operated Runner Scaler.
-	// Empty disables GET /admin/scaler (it returns 503). No other scaler
-	// setting exists — deliberately minimal (specs/005-simple-scaler-proxy).
+	// Empty disables GET /admin/scaler (it returns 503).
 	ScalerURL string
 }
 
@@ -428,7 +427,7 @@ func LoadAPI() (*APIConfig, error) {
 		}
 	}
 
-	cfg.ScalerURL = strings.TrimSpace(os.Getenv("SANDBOX_API_SCALER_URL"))
+	cfg.ScalerURL = strings.TrimRight(strings.TrimSpace(os.Getenv("SANDBOX_API_SCALER_URL")), "/")
 
 	return cfg, nil
 }
