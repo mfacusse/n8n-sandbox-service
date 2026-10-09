@@ -38,6 +38,9 @@ func toGRPCError(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return status.Error(codes.DeadlineExceeded, context.DeadlineExceeded.Error())
 	}
+	if errors.Is(err, runnerruntime.ErrCapacityFull) {
+		return status.Error(codes.ResourceExhausted, err.Error())
+	}
 	return status.Errorf(codes.Internal, "%v", err)
 }
 

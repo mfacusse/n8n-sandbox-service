@@ -32,6 +32,9 @@ var ErrSandboxNetworkUnavailable = errors.New("sandbox network unavailable")
 // ErrSandboxNotRunning is returned when a sandbox exists but is not running.
 var ErrSandboxNotRunning = errors.New("sandbox not running")
 
+// ErrCapacityFull is returned when a runner has no slot for another sandbox.
+var ErrCapacityFull = errors.New("sandbox capacity full")
+
 // Egress is a sandbox's outbound network policy.
 type Egress string
 

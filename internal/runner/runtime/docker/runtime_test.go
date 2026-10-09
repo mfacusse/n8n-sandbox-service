@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -95,6 +96,108 @@ func (f *fakeDockerBackend) watchContainerDeaths(context.Context, func(string, s
 
 func (f *fakeDockerBackend) run(context.Context, ...string) (string, error) {
 	return "", errors.New("unexpected run")
+}
+
+// barrierDockerBackend blocks inside createContainer until released, and
+// reports the containers it created as the managed set, so admission can be
+// tested with concurrent creates racing one slot.
+type barrierDockerBackend struct {
+	fakeDockerBackend
+	mu           sync.Mutex
+	created      []string
+	enteredCount int
+	entered      chan string
+	release      chan struct{}
+}
+
+func (b *barrierDockerBackend) createContainer(_ context.Context, _, containerName, _, _ string, _ *ResourceLimits, _ bool) (string, error) {
+	b.mu.Lock()
+	b.enteredCount++
+	b.mu.Unlock()
+	b.entered <- containerName
+	<-b.release
+	b.mu.Lock()
+	b.created = append(b.created, containerName)
+	b.mu.Unlock()
+	return containerName, nil
+}
+
+func (b *barrierDockerBackend) findContainerByLabels(context.Context, ...string) ([]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.created...), nil
+}
+
+// With one slot and the winning create blocked inside docker create, every
+// other concurrent create is refused with ErrCapacityFull, and the reservation
+// is released once the winner's container exists.
+func TestCreateContainerBarrierAdmitsOnlyCapacity(t *testing.T) {
+	const creates = 8
+	backend := &barrierDockerBackend{
+		fakeDockerBackend: fakeDockerBackend{events: &[]string{}, ip: "172.18.0.2"},
+		entered:           make(chan string, creates),
+		release:           make(chan struct{}),
+	}
+	m := newRuntime(&config.Config{CapacityTotal: 1}, Config{}, backend)
+	m.imageReady.Store(true)
+	m.applyPolicy = func(string, string, string, string, int, bool) error { return nil }
+	m.teardownRules = func(string) error { return nil }
+	m.waitForDaemon = func(context.Context, string) error { return nil }
+
+	results := make(chan error, creates)
+	var wg sync.WaitGroup
+	for i := 0; i < creates; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := m.CreateContainer(context.Background(), fmt.Sprintf("sandbox-id-%02d", i), nil)
+			results <- err
+		}(i)
+	}
+
+	// One create wins the slot and blocks inside docker create.
+	select {
+	case <-backend.entered:
+	case <-time.After(30 * time.Second):
+		t.Fatal("no create reached the docker backend")
+	}
+
+	// The rest are refused at admission.
+	for i := 0; i < creates-1; i++ {
+		select {
+		case err := <-results:
+			if !errors.Is(err, ErrCapacityFull) {
+				t.Fatalf("refused create error = %v, want %v", err, ErrCapacityFull)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("timed out waiting for refused creates")
+		}
+	}
+
+	// Let the winner finish; it must succeed.
+	close(backend.release)
+	select {
+	case err := <-results:
+		if err != nil {
+			t.Fatalf("admitted create failed: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("timed out waiting for the admitted create")
+	}
+	wg.Wait()
+
+	backend.mu.Lock()
+	enteredCount := backend.enteredCount
+	backend.mu.Unlock()
+	if enteredCount != 1 {
+		t.Fatalf("creates that reached docker = %d, want 1", enteredCount)
+	}
+	m.mu.Lock()
+	got := m.inFlight
+	m.mu.Unlock()
+	if got != 0 {
+		t.Fatalf("inFlight = %d, want 0", got)
+	}
 }
 
 func TestDockerLimitArgs(t *testing.T) {

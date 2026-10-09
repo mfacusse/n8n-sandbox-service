@@ -23,6 +23,8 @@ import (
 	"github.com/n8n-io/sandbox-service/internal/obs"
 	runnerruntime "github.com/n8n-io/sandbox-service/internal/runner/runtime"
 	"github.com/n8n-io/sandbox-service/internal/sandboxproxy"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // newRunnerTransport builds the transport the API uses to reach runner HTTP
@@ -429,6 +431,10 @@ func handleCreateSandbox(s store.SandboxStore, reg registry.RunnerRegistry, cfg 
 				"runner_control_grpc_addr", controlAddr,
 				"error", err,
 			)
+			if status.Code(err) == codes.ResourceExhausted {
+				writeError(w, http.StatusServiceUnavailable, "capacity_full")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "failed to create container: "+err.Error())
 			return
 		}
