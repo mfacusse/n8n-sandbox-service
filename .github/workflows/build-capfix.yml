@@ -1,0 +1,44 @@
+name: build-capfix
+
+on:
+  push:
+    branches: [v1.6.0-capfix.1]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  TAG: v1.6.0-capfix.1
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { dockerfile: Dockerfile.api, image: n8n-sandbox-service-api }
+          - { dockerfile: Dockerfile.runner-dind, image: n8n-sandbox-service-runner-dind }
+          - { dockerfile: Dockerfile.sandbox, image: n8n-sandbox-service-sandbox }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/mfacusse/${{ matrix.image }}:${{ env.TAG }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/mfacusse/n8n-sandbox-service
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Record digest
+        run: echo "DIGEST ${{ matrix.image }}@${{ steps.build.outputs.digest }}" | tee -a $GITHUB_STEP_SUMMARY
