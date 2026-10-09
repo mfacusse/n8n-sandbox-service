@@ -280,23 +280,24 @@ func (m *Runtime) StopSandbox(ctx context.Context, sandboxID string) error {
 // Count and increment happen under mu, so a create finishing between the two
 // cannot slip a second admission past the limit. mu is released before the
 // Docker create call: the cleanup paths acquire it, and holding it across
-// create would deadlock them.
-func (m *Runtime) reserve(ctx context.Context) error {
+// create would deadlock them. taken is false when capacity is unlimited and no
+// reservation was made, so the caller releases only what it holds.
+func (m *Runtime) reserve(ctx context.Context) (taken bool, err error) {
 	total := m.runnerConfig.CapacityTotal
 	if total <= 0 {
-		return nil
+		return false, nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	n, err := m.ManagedContainerCount(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if int32(n)+int32(m.inFlight) >= total {
-		return ErrCapacityFull
+		return false, ErrCapacityFull
 	}
 	m.inFlight++
-	return nil
+	return true, nil
 }
 
 // release returns a reservation held by reserve. Called exactly once per
@@ -327,10 +328,11 @@ func (m *Runtime) CreateContainer(ctx context.Context, sandboxID string, opts *C
 	limits := m.defaultLimits()
 	n := m.networkFor(opts.BlockEgress())
 
-	if err := m.reserve(ctx); err != nil {
+	taken, err := m.reserve(ctx)
+	if err != nil {
 		return nil, err
 	}
-	reserved := true
+	reserved := taken
 	defer func() {
 		if reserved {
 			m.release()
@@ -343,8 +345,10 @@ func (m *Runtime) CreateContainer(ctx context.Context, sandboxID string, opts *C
 	}
 	// The container exists with the managed label now, so the managed count
 	// covers it and the in-flight reservation is spent.
-	m.release()
-	reserved = false
+	if reserved {
+		m.release()
+		reserved = false
+	}
 
 	cleanupOnError := func() {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupBudget)

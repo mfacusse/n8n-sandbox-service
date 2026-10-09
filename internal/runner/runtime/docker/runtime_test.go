@@ -200,6 +200,31 @@ func TestCreateContainerBarrierAdmitsOnlyCapacity(t *testing.T) {
 	}
 }
 
+// Unlimited capacity (CapacityTotal <= 0) takes no reservation, so nothing is
+// released either: inFlight must stay 0 rather than drift negative.
+func TestCreateContainerUnlimitedCapacityLeavesInFlightUntouched(t *testing.T) {
+	events := []string{}
+	m := newRuntime(&config.Config{CapacityTotal: 0}, Config{}, &fakeDockerBackend{
+		events:      &events,
+		containerID: "container-1",
+		ip:          "172.18.0.2",
+	})
+	m.imageReady.Store(true)
+	m.applyPolicy = func(string, string, string, string, int, bool) error { return nil }
+	m.teardownRules = func(string) error { return nil }
+	m.waitForDaemon = func(context.Context, string) error { return nil }
+
+	if _, err := m.CreateContainer(context.Background(), "sandbox-id-1234", nil); err != nil {
+		t.Fatalf("CreateContainer() failed: %v", err)
+	}
+	m.mu.Lock()
+	got := m.inFlight
+	m.mu.Unlock()
+	if got != 0 {
+		t.Fatalf("inFlight = %d, want 0", got)
+	}
+}
+
 func TestDockerLimitArgs(t *testing.T) {
 	limits := &ResourceLimits{
 		MemoryMB:   512,
